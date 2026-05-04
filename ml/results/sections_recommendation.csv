@@ -1,0 +1,283 @@
+next_sem,course_code,course_name,actual_count,predicted_count,actual_sections,predicted_sections,section_diff
+2024_Spring,0000201291,Apprenticeship for Computer Science 1,7,7,1,1,0
+2024_Spring,0000201292,Apprenticeship for Computer Science 2,148,152,6,7,1
+2024_Spring,0000201391,Computing Research Project,185,227,8,10,2
+2024_Spring,0000201392,Apprenticeship for Computer Science 3,25,25,1,2,1
+2024_Spring,0000203280,Security,204,204,9,9,0
+2024_Spring,0000203290,Apprenticeship for Cybersecurity 1,9,9,1,1,0
+2024_Spring,0000203291,Apprenticeship for Cybersecurity 2,130,128,6,6,0
+2024_Spring,0000203360,Penetration Testing,53,54,3,3,0
+2024_Spring,0000203391,Apprenticeship for Cybersecurity 3,83,117,4,6,2
+2024_Spring,0000203400,Risk Analysis and Systems Testing,49,50,2,3,1
+2024_Spring,0000203420,Secure Coding,37,102,2,5,3
+2024_Spring,0000204280,Principles of Data Science and Computing,88,80,4,4,0
+2024_Spring,0000204290,Apprenticeship for DS and AI 1,66,96,3,5,2
+2024_Spring,0000204291,Apprenticeship for DS and AI 2,72,67,3,3,0
+2024_Spring,0000204310,Advanced Programming for Data Analysis,62,148,3,7,4
+2024_Spring,0000204311,Big Data Analytics and Visualization,73,77,3,4,1
+2024_Spring,0000204313,Business Process Support,240,240,10,11,1
+2024_Spring,0000204391,Apprenticeship for DS and AI 3,75,90,3,4,1
+2024_Spring,0000204411,Time Series Analysis,14,41,1,2,1
+2024_Spring,0000204430,Data Mining,65,71,3,4,1
+2024_Spring,0000302222,Intro to Philosophy and Critical Thinking,12,11,1,1,0
+2024_Spring,0010203180,Networking,266,326,11,15,4
+2024_Spring,0010203210,Network Security,96,109,4,5,1
+2024_Spring,0010203300,Information Security Management,55,60,3,3,0
+2024_Spring,0010203340,Cryptography,35,36,2,2,0
+2024_Spring,0010203361,Forensics,60,60,3,3,0
+2024_Spring,0010203362,Ethical Hacking,93,134,4,6,2
+2024_Spring,0010203380,Computer Organization and Design,132,217,6,10,4
+2024_Spring,0010203401,Incident Response Management,16,51,1,3,2
+2024_Spring,0010203410,Mobile and Wireless Security,18,60,1,3,2
+2024_Spring,0010203411,Internet of Things Security,15,23,1,2,1
+2024_Spring,0010203420,Secure System Design and Development,14,63,1,3,2
+2024_Spring,0010203421,Web Security,5,5,1,1,0
+2024_Spring,0010203491,Capstone Project I (Cyber),32,29,2,2,0
+2024_Spring,0010203492,Capstone Project II (Cyber),24,23,1,2,1
+2024_Spring,0010204210,Data Analytics,87,93,4,5,1
+2024_Spring,0010204250,AI and Intelligent Systems,85,89,4,4,0
+2024_Spring,0010204281,Data Science Programming,77,97,4,5,1
+2024_Spring,0010204282,Database Design and Development,252,270,11,12,1
+2024_Spring,0010204330,Modeling and Simulation,29,37,2,2,0
+2024_Spring,0010204350,Machine Learning,76,85,4,4,0
+2024_Spring,0010204351,Natural Language Processing,33,30,2,2,0
+2024_Spring,0010204431,Information Retrieval,24,58,1,3,2
+2024_Spring,0010204450,Deep Learning,31,32,2,2,0
+2024_Spring,0010204451,Pattern Recognition,34,76,2,4,2
+2024_Spring,0010204452,Computer Vision,4,3,1,1,0
+2024_Spring,0010204491,Capstone Project I (AI),35,31,2,2,0
+2024_Spring,0010204492,Capstone Project II (AI),16,16,1,1,0
+2024_Spring,0030301110,Remedial Arabic Language,3,3,1,1,0
+2024_Spring,0030301111,Arabic Language & Communication Skills,101,96,5,5,0
+2024_Spring,0030301120,Pre-Foundation English Intensive + Lab,11,10,1,1,0
+2024_Spring,0030301121,English Pre-Intermediate Intensive + Lab,186,187,8,9,1
+2024_Spring,0030301122,English Intermediate,260,269,11,12,1
+2024_Spring,0030301123,English Upper-Intermediate,222,235,9,11,2
+2024_Spring,0030301124,English Advanced,157,159,7,7,0
+2024_Spring,0030301222,Research and Technical Writing,58,224,3,10,7
+2024_Spring,0030302121,Science and Society Seminar I,11,12,1,1,0
+2024_Spring,0030302122,Arab Contributions to Science and Art,57,193,3,9,6
+2024_Spring,0030302129,Military Sciences,157,259,7,12,5
+2024_Spring,0030302133,Jerusalem: History and Civilization,5,7,1,1,0
+2024_Spring,0030302134,Jordan: History and Civilization,38,139,2,7,5
+2024_Spring,0030302232,Leadership Camp,89,81,4,4,0
+2024_Spring,0030302237,Free Choice Elective I,8,7,1,1,0
+2024_Spring,0030303110,Remedial Math,8,7,1,1,0
+2024_Spring,0030303111,Functional Math,259,398,11,18,7
+2024_Spring,0030303121,STEM Lab I,90,97,4,5,1
+2024_Spring,0040201100,Programming,283,328,12,15,3
+2024_Spring,0040201200,Advanced Programming,86,80,4,4,0
+2024_Spring,0040201201,Data Structures and Algorithms,241,298,10,14,4
+2024_Spring,0040201220,Software Development Lifecycles,263,264,11,12,1
+2024_Spring,0040201260,Website Design and Development,158,204,7,9,2
+2024_Spring,0040201261,Prototyping,76,77,4,4,0
+2024_Spring,0040201290,Computing Project Planning,296,309,12,14,2
+2024_Spring,0040201320,ERP Systems,34,34,2,2,0
+2024_Spring,0040201321,Systems Analysis and Design,75,93,3,5,2
+2024_Spring,0040201341,Operating Systems,241,244,10,11,1
+2024_Spring,0040201360,Application Development,94,92,4,5,1
+2024_Spring,0040201362,Games Engine and Scripting,45,54,2,3,1
+2024_Spring,0040201430,Database Programming,45,90,2,4,2
+2024_Spring,0040201440,Systems Programming,29,28,2,2,0
+2024_Spring,0040201441,Internet of Things,24,93,1,5,4
+2024_Spring,0040201442,Real Time Systems,6,7,1,1,0
+2024_Spring,0040201460,E-Commerce,16,70,1,4,3
+2024_Spring,0040201461,Mobile Application Development,20,23,1,2,1
+2024_Spring,0040201462,Virtual and Augmented Reality Development,22,30,1,2,1
+2024_Spring,0040201491,Capstone Project I,36,28,2,2,0
+2024_Spring,0040201492,Capstone Project II,24,24,1,2,1
+2024_Spring,0040302111,Professional Skills,43,42,2,2,0
+2024_Spring,0040302211,Professional Practice,201,202,9,9,0
+2024_Spring,0040302221,Speech and Debate,38,93,2,5,3
+2024_Spring,0040302231,Entrepreneurship Bootcamp,250,331,10,15,5
+2024_Spring,0040303121,Maths for Computing,266,272,11,12,1
+2024_Spring,0040303130,Fundamentals of Computing,284,330,12,15,3
+2024_Spring,0040303221,Discrete Maths,223,245,9,11,2
+2024_Summer,0000201291,Apprenticeship for Computer Science 1,0,0,0,0,0
+2024_Summer,0000201292,Apprenticeship for Computer Science 2,5,14,1,1,0
+2024_Summer,0000201391,Computing Research Project,22,144,1,7,6
+2024_Summer,0000201392,Apprenticeship for Computer Science 3,20,51,1,3,2
+2024_Summer,0000203280,Security,69,132,3,6,3
+2024_Summer,0000203290,Apprenticeship for Cybersecurity 1,2,1,1,1,0
+2024_Summer,0000203291,Apprenticeship for Cybersecurity 2,1,8,1,1,0
+2024_Summer,0000203360,Penetration Testing,47,56,2,3,1
+2024_Summer,0000203391,Apprenticeship for Cybersecurity 3,7,58,1,3,2
+2024_Summer,0000203400,Risk Analysis and Systems Testing,21,23,1,2,1
+2024_Summer,0000203420,Secure Coding,3,53,1,3,2
+2024_Summer,0000204280,Principles of Data Science and Computing,13,30,1,2,1
+2024_Summer,0000204290,Apprenticeship for DS and AI 1,2,22,1,1,0
+2024_Summer,0000204291,Apprenticeship for DS and AI 2,11,30,1,2,1
+2024_Summer,0000204310,Advanced Programming for Data Analysis,22,83,1,4,3
+2024_Summer,0000204311,Big Data Analytics and Visualization,17,37,1,2,1
+2024_Summer,0000204313,Business Process Support,113,138,5,7,2
+2024_Summer,0000204391,Apprenticeship for DS and AI 3,15,34,1,2,1
+2024_Summer,0000204411,Time Series Analysis,1,9,1,1,0
+2024_Summer,0000204430,Data Mining,13,21,1,1,0
+2024_Summer,0000302222,Intro to Philosophy and Critical Thinking,0,0,0,0,0
+2024_Summer,0010203180,Networking,34,128,2,6,4
+2024_Summer,0010203210,Network Security,21,43,1,2,1
+2024_Summer,0010203300,Information Security Management,5,19,1,1,0
+2024_Summer,0010203340,Cryptography,23,27,1,2,1
+2024_Summer,0010203361,Forensics,25,27,1,2,1
+2024_Summer,0010203362,Ethical Hacking,17,62,1,3,2
+2024_Summer,0010203380,Computer Organization and Design,34,127,2,6,4
+2024_Summer,0010203401,Incident Response Management,5,48,1,3,2
+2024_Summer,0010203410,Mobile and Wireless Security,3,41,1,2,1
+2024_Summer,0010203411,Internet of Things Security,1,1,1,1,0
+2024_Summer,0010203420,Secure System Design and Development,3,37,1,2,1
+2024_Summer,0010203421,Web Security,0,0,0,0,0
+2024_Summer,0010203491,Capstone Project I (Cyber),12,13,1,1,0
+2024_Summer,0010203492,Capstone Project II (Cyber),16,16,1,1,0
+2024_Summer,0010204210,Data Analytics,8,54,1,3,2
+2024_Summer,0010204250,AI and Intelligent Systems,19,40,1,2,1
+2024_Summer,0010204281,Data Science Programming,12,57,1,3,2
+2024_Summer,0010204282,Database Design and Development,40,146,2,7,5
+2024_Summer,0010204330,Modeling and Simulation,16,32,1,2,1
+2024_Summer,0010204350,Machine Learning,16,48,1,3,2
+2024_Summer,0010204351,Natural Language Processing,7,22,1,1,0
+2024_Summer,0010204431,Information Retrieval,5,33,1,2,1
+2024_Summer,0010204450,Deep Learning,16,23,1,2,1
+2024_Summer,0010204451,Pattern Recognition,2,27,1,2,1
+2024_Summer,0010204452,Computer Vision,0,0,0,0,0
+2024_Summer,0010204491,Capstone Project I (AI),11,10,1,1,0
+2024_Summer,0010204492,Capstone Project II (AI),16,16,1,1,0
+2024_Summer,0030301110,Remedial Arabic Language,0,0,0,0,0
+2024_Summer,0030301111,Arabic Language & Communication Skills,4,5,1,1,0
+2024_Summer,0030301120,Pre-Foundation English Intensive + Lab,0,0,0,0,0
+2024_Summer,0030301121,English Pre-Intermediate Intensive + Lab,17,20,1,1,0
+2024_Summer,0030301122,English Intermediate,83,115,4,6,2
+2024_Summer,0030301123,English Upper-Intermediate,26,130,2,6,4
+2024_Summer,0030301124,English Advanced,52,67,3,3,0
+2024_Summer,0030301222,Research and Technical Writing,22,74,1,4,3
+2024_Summer,0030302121,Science and Society Seminar I,0,0,0,0,0
+2024_Summer,0030302122,Arab Contributions to Science and Art,15,73,1,4,3
+2024_Summer,0030302129,Military Sciences,41,76,2,4,2
+2024_Summer,0030302133,Jerusalem: History and Civilization,0,0,0,0,0
+2024_Summer,0030302134,Jordan: History and Civilization,4,27,1,2,1
+2024_Summer,0030302232,Leadership Camp,61,67,3,3,0
+2024_Summer,0030302237,Free Choice Elective I,0,0,0,0,0
+2024_Summer,0030303110,Remedial Math,2,1,1,1,0
+2024_Summer,0030303111,Functional Math,26,130,2,6,4
+2024_Summer,0030303121,STEM Lab I,7,10,1,1,0
+2024_Summer,0040201100,Programming,31,117,2,6,4
+2024_Summer,0040201200,Advanced Programming,55,51,3,3,0
+2024_Summer,0040201201,Data Structures and Algorithms,32,135,2,6,4
+2024_Summer,0040201220,Software Development Lifecycles,102,152,5,7,2
+2024_Summer,0040201260,Website Design and Development,13,97,1,5,4
+2024_Summer,0040201261,Prototyping,26,50,2,3,1
+2024_Summer,0040201290,Computing Project Planning,33,107,2,5,3
+2024_Summer,0040201320,ERP Systems,23,29,1,2,1
+2024_Summer,0040201321,Systems Analysis and Design,9,53,1,3,2
+2024_Summer,0040201341,Operating Systems,75,123,3,6,3
+2024_Summer,0040201360,Application Development,11,32,1,2,1
+2024_Summer,0040201362,Games Engine and Scripting,3,22,1,1,0
+2024_Summer,0040201430,Database Programming,8,45,1,2,1
+2024_Summer,0040201440,Systems Programming,18,21,1,1,0
+2024_Summer,0040201441,Internet of Things,2,36,1,2,1
+2024_Summer,0040201442,Real Time Systems,0,0,0,0,0
+2024_Summer,0040201460,E-Commerce,1,23,1,2,1
+2024_Summer,0040201461,Mobile Application Development,2,2,1,1,0
+2024_Summer,0040201462,Virtual and Augmented Reality Development,2,2,1,1,0
+2024_Summer,0040201491,Capstone Project I,18,13,1,1,0
+2024_Summer,0040201492,Capstone Project II,17,18,1,1,0
+2024_Summer,0040302111,Professional Skills,2,2,1,1,0
+2024_Summer,0040302211,Professional Practice,113,134,5,6,1
+2024_Summer,0040302221,Speech and Debate,4,14,1,1,0
+2024_Summer,0040302231,Entrepreneurship Bootcamp,32,137,2,7,5
+2024_Summer,0040303121,Maths for Computing,75,126,3,6,3
+2024_Summer,0040303130,Fundamentals of Computing,25,72,1,4,3
+2024_Summer,0040303221,Discrete Maths,41,136,2,6,4
+2025_Fall,0000201291,Apprenticeship for Computer Science 1,0,0,0,0,0
+2025_Fall,0000201292,Apprenticeship for Computer Science 2,16,17,1,1,0
+2025_Fall,0000201391,Computing Research Project,306,318,13,14,1
+2025_Fall,0000201392,Apprenticeship for Computer Science 3,120,105,5,5,0
+2025_Fall,0000203280,Security,229,223,10,10,0
+2025_Fall,0000203290,Apprenticeship for Cybersecurity 1,0,0,0,0,0
+2025_Fall,0000203291,Apprenticeship for Cybersecurity 2,23,18,1,1,0
+2025_Fall,0000203360,Penetration Testing,64,65,3,3,0
+2025_Fall,0000203391,Apprenticeship for Cybersecurity 3,92,136,4,6,2
+2025_Fall,0000203400,Risk Analysis and Systems Testing,35,36,2,2,0
+2025_Fall,0000203420,Secure Coding,54,102,3,5,2
+2025_Fall,0000204280,Principles of Data Science and Computing,93,77,4,4,0
+2025_Fall,0000204290,Apprenticeship for DS and AI 1,29,37,2,2,0
+2025_Fall,0000204291,Apprenticeship for DS and AI 2,73,60,3,3,0
+2025_Fall,0000204310,Advanced Programming for Data Analysis,71,132,3,6,3
+2025_Fall,0000204311,Big Data Analytics and Visualization,66,73,3,4,1
+2025_Fall,0000204313,Business Process Support,185,183,8,9,1
+2025_Fall,0000204391,Apprenticeship for DS and AI 3,62,65,3,3,0
+2025_Fall,0000204411,Time Series Analysis,9,16,1,1,0
+2025_Fall,0000204430,Data Mining,20,24,1,2,1
+2025_Fall,0000302222,Intro to Philosophy and Critical Thinking,0,0,0,0,0
+2025_Fall,0010203180,Networking,225,248,9,11,2
+2025_Fall,0010203210,Network Security,84,87,4,4,0
+2025_Fall,0010203300,Information Security Management,43,43,2,2,0
+2025_Fall,0010203340,Cryptography,31,32,2,2,0
+2025_Fall,0010203361,Forensics,50,50,2,3,1
+2025_Fall,0010203362,Ethical Hacking,66,121,3,6,3
+2025_Fall,0010203380,Computer Organization and Design,193,234,8,11,3
+2025_Fall,0010203401,Incident Response Management,30,87,2,4,2
+2025_Fall,0010203410,Mobile and Wireless Security,30,88,2,4,2
+2025_Fall,0010203411,Internet of Things Security,0,0,0,0,0
+2025_Fall,0010203420,Secure System Design and Development,34,76,2,4,2
+2025_Fall,0010203421,Web Security,0,0,0,0,0
+2025_Fall,0010203491,Capstone Project I (Cyber),16,16,1,1,0
+2025_Fall,0010203492,Capstone Project II (Cyber),31,30,2,2,0
+2025_Fall,0010204210,Data Analytics,76,96,4,5,1
+2025_Fall,0010204250,AI and Intelligent Systems,84,85,4,4,0
+2025_Fall,0010204281,Data Science Programming,112,120,5,6,1
+2025_Fall,0010204282,Database Design and Development,291,286,12,13,1
+2025_Fall,0010204330,Modeling and Simulation,38,45,2,2,0
+2025_Fall,0010204350,Machine Learning,87,94,4,5,1
+2025_Fall,0010204351,Natural Language Processing,46,43,2,2,0
+2025_Fall,0010204431,Information Retrieval,27,61,2,3,1
+2025_Fall,0010204450,Deep Learning,25,26,1,2,1
+2025_Fall,0010204451,Pattern Recognition,25,49,1,3,2
+2025_Fall,0010204452,Computer Vision,0,0,0,0,0
+2025_Fall,0010204491,Capstone Project I (AI),18,18,1,1,0
+2025_Fall,0010204492,Capstone Project II (AI),30,30,2,2,0
+2025_Fall,0030301110,Remedial Arabic Language,0,0,0,0,0
+2025_Fall,0030301111,Arabic Language & Communication Skills,6,5,1,1,0
+2025_Fall,0030301120,Pre-Foundation English Intensive + Lab,0,0,0,0,0
+2025_Fall,0030301121,English Pre-Intermediate Intensive + Lab,29,25,2,2,0
+2025_Fall,0030301122,English Intermediate,146,146,6,7,1
+2025_Fall,0030301123,English Upper-Intermediate,289,311,12,14,2
+2025_Fall,0030301124,English Advanced,100,99,4,5,1
+2025_Fall,0030301222,Research and Technical Writing,30,103,2,5,3
+2025_Fall,0030302121,Science and Society Seminar I,0,0,0,0,0
+2025_Fall,0030302122,Arab Contributions to Science and Art,26,93,2,5,3
+2025_Fall,0030302129,Military Sciences,65,95,3,5,2
+2025_Fall,0030302133,Jerusalem: History and Civilization,0,0,0,0,0
+2025_Fall,0030302134,Jordan: History and Civilization,8,41,1,2,1
+2025_Fall,0030302232,Leadership Camp,81,75,4,4,0
+2025_Fall,0030302237,Free Choice Elective I,0,0,0,0,0
+2025_Fall,0030303110,Remedial Math,0,0,0,0,0
+2025_Fall,0030303111,Functional Math,223,257,9,12,3
+2025_Fall,0030303121,STEM Lab I,7,8,1,1,0
+2025_Fall,0040201100,Programming,237,258,10,12,2
+2025_Fall,0040201200,Advanced Programming,59,52,3,3,0
+2025_Fall,0040201201,Data Structures and Algorithms,273,330,11,15,4
+2025_Fall,0040201220,Software Development Lifecycles,217,210,9,10,1
+2025_Fall,0040201260,Website Design and Development,211,240,9,11,2
+2025_Fall,0040201261,Prototyping,86,86,4,4,0
+2025_Fall,0040201290,Computing Project Planning,279,276,12,13,1
+2025_Fall,0040201320,ERP Systems,40,40,2,2,0
+2025_Fall,0040201321,Systems Analysis and Design,94,105,4,5,1
+2025_Fall,0040201341,Operating Systems,203,194,9,9,0
+2025_Fall,0040201360,Application Development,74,73,3,4,1
+2025_Fall,0040201362,Games Engine and Scripting,41,46,2,3,1
+2025_Fall,0040201430,Database Programming,39,78,2,4,2
+2025_Fall,0040201440,Systems Programming,33,30,2,2,0
+2025_Fall,0040201441,Internet of Things,16,69,1,4,3
+2025_Fall,0040201442,Real Time Systems,0,0,0,0,0
+2025_Fall,0040201460,E-Commerce,15,44,1,2,1
+2025_Fall,0040201461,Mobile Application Development,1,1,1,1,0
+2025_Fall,0040201462,Virtual and Augmented Reality Development,2,1,1,1,0
+2025_Fall,0040201491,Capstone Project I,24,15,1,1,0
+2025_Fall,0040201492,Capstone Project II,34,34,2,2,0
+2025_Fall,0040302111,Professional Skills,1,1,1,1,0
+2025_Fall,0040302211,Professional Practice,232,231,10,11,1
+2025_Fall,0040302221,Speech and Debate,7,22,1,1,0
+2025_Fall,0040302231,Entrepreneurship Bootcamp,234,309,10,14,4
+2025_Fall,0040303121,Maths for Computing,215,213,9,10,1
+2025_Fall,0040303130,Fundamentals of Computing,100,106,4,5,1
+2025_Fall,0040303221,Discrete Maths,291,301,12,14,2

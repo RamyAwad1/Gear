@@ -1,0 +1,680 @@
+"""
+HTU Intelligent Registration System — Inference Module
+=======================================================
+This module is the Django-facing bridge to the trained ML pipeline.
+It loads pre-trained .pkl artifacts and exposes three public functions:
+
+    predict_next_semester()        — per-student enrollment predictions + demand
+    explain_live_student()         — SHAP explanation for one student-course pair
+    explain_live_course_demand()   — aggregate SHAP for one course's demand drivers
+
+No training code, no plotting libraries. Safe to import from Django.
+"""
+
+import os
+import json
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+
+# ── 1. Configuration & Paths ──────────────────────────────────────────────────
+ML_DIR = os.path.dirname(os.path.abspath(__file__))
+ARTIFACTS_DIR = os.path.join(ML_DIR, "artifacts")
+
+HORIZON = 1
+PLAN_TOTAL_HOURS = {
+    "CS_Bachelor": 135, "CS_Technical": 105,
+    "AI_Bachelor": 135, "AI_Technical": 105,
+    "Cyber_Bachelor": 135, "Cyber_Technical": 105,
+}
+
+CAT_FEATURES = ["major", "degree_type", "prediction_term"]
+NUM_FEATURES_STUDENT = [
+    "admission_year", "cum_gpa", "cum_passed_hrs", "semester_number",
+    "needs_rem_arabic", "needs_rem_english", "needs_rem_math",
+]
+V3_EXTRA_STUDENT_LEVEL = [
+    "extra_gpa_trend", "extra_avg_credits_per_sem",
+    "extra_hrs_remaining", "extra_hrs_ratio_done", "extra_is_near_graduation",
+]
+COURSE_TS_COLS = [
+    "course_lag_1", "course_lag_2", "course_lag_3",
+    "course_roll_mean_3", "course_roll_std_3",
+    "course_yoy_lag", "course_trend", "course_term_mean",
+    "course_fail_pool", "course_eligible_proxy", "new_students",
+]
+COURSE_META_COLS = [
+    "credit_hours", "lecture_hours", "lab_hours", "category_ord", "is_compulsory",
+]
+COURSE_TS_DEFAULTS = {col: 0.0 for col in COURSE_TS_COLS}
+COURSE_META_DEFAULTS = {
+    "credit_hours": 3.0, "lecture_hours": 3.0, "lab_hours": 0.0,
+    "category_ord": 0, "is_compulsory": 0,
+}
+PASSING = {"D", "M", "P"}
+
+
+# ── 2. Helper Functions ───────────────────────────────────────────────────────
+
+def build_snapshots(enrolls_df, students_df, all_codes, horizon=HORIZON):
+    """Build per-student per-semester snapshot rows from enrollment history."""
+    rows = []
+    by_student = {
+        sid: grp.sort_values("sem_sort_key")
+        for sid, grp in enrolls_df.groupby("student_id")
+    }
+    stu_meta = students_df.set_index("student_id")
+    sorted_codes = sorted(all_codes)
+    code_to_idx = {c: i for i, c in enumerate(sorted_codes)}
+
+    for student_id, hist in by_student.items():
+        if student_id not in stu_meta.index:
+            continue
+        meta = stu_meta.loc[student_id]
+        sem_list = (
+            hist[["semester_label", "sem_sort_key"]]
+            .drop_duplicates()
+            .sort_values("sem_sort_key")["semester_label"]
+            .tolist()
+        )
+
+        passed_vec = np.zeros(len(sorted_codes), dtype=np.int8)
+        failed_vec = np.zeros(len(sorted_codes), dtype=np.int8)
+        cum_hrs = 0
+        cum_gpa = 0.0
+
+        for sem_idx, sem_label in enumerate(sem_list):
+            sem_rows = hist[hist["semester_label"] == sem_label]
+            last_rec = sem_rows.sort_values("sem_sort_key").iloc[-1]
+            if "cum_gpa" in last_rec.index and pd.notna(last_rec.get("cum_gpa")):
+                cum_gpa = float(last_rec["cum_gpa"])
+
+            sem_passed_hrs = sem_rows[
+                sem_rows["grade"].isin(PASSING)
+            ]["credit_hours"].sum()
+            cum_hrs += int(sem_passed_hrs)
+
+            for _, rec in sem_rows.iterrows():
+                c = rec["course_code"]
+                if c not in code_to_idx:
+                    continue
+                idx = code_to_idx[c]
+                if rec["grade"] in PASSING:
+                    passed_vec[idx] = 1
+                    failed_vec[idx] = 0
+                elif rec["grade"] in {"U", "W"}:
+                    failed_vec[idx] = 1
+
+            tgt_idx = sem_idx + horizon
+            enrolled_next = None
+            next_sem_label = None
+            if tgt_idx < len(sem_list):
+                next_sem_label = sem_list[tgt_idx]
+                next_rows = hist[hist["semester_label"] == next_sem_label]
+                enrolled_next = set(next_rows["course_code"].tolist())
+
+            sem_term = sem_label.split("_")[1]
+
+            row = {
+                "student_id":        student_id,
+                "snapshot_sem":      sem_label,
+                "sem_sort_key":      sem_rows["sem_sort_key"].iloc[0],
+                "next_sem":          next_sem_label,
+                "major":             meta["major"],
+                "degree_type":       meta["degree_type"],
+                "plan_key":          meta.get(
+                    "plan_key", f"{meta['major']}_{meta['degree_type']}"
+                ),
+                "admission_year":    int(meta["admission_year"]),
+                "needs_rem_arabic":  int(meta.get("needs_rem_arabic", 0)),
+                "needs_rem_english": int(meta.get("needs_rem_english", 0)),
+                "needs_rem_math":    int(meta.get("needs_rem_math", 0)),
+                "cum_gpa":           cum_gpa,
+                "cum_passed_hrs":    int(cum_hrs),
+                "semester_number":   sem_idx + 1,
+                "prediction_term":   sem_term,
+                "_enrolled_next":    enrolled_next,
+            }
+            for c in sorted_codes:
+                idx = code_to_idx[c]
+                row[f"passed_{c}"] = int(passed_vec[idx])
+                row[f"failed_{c}"] = int(failed_vec[idx])
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def add_v3_student_level(snap_df):
+    """Add V3 student-level engineered features to the snapshot DataFrame."""
+    df = snap_df.copy().sort_values(["student_id", "sem_sort_key"])
+    df["prev_cum_gpa"] = df.groupby("student_id")["cum_gpa"].shift(1)
+    df["extra_gpa_trend"] = (df["cum_gpa"] - df["prev_cum_gpa"]).fillna(0)
+    df["prev_cum_hrs"] = (
+        df.groupby("student_id")["cum_passed_hrs"].shift(1).fillna(0)
+    )
+    df["sem_credits"] = df["cum_passed_hrs"] - df["prev_cum_hrs"]
+    df["extra_avg_credits_per_sem"] = (
+        df.groupby("student_id")["sem_credits"]
+        .transform(lambda x: x.expanding().mean())
+        .fillna(0)
+    )
+    df["plan_total_hrs"] = df["plan_key"].map(PLAN_TOTAL_HOURS).fillna(135)
+    df["extra_hrs_remaining"] = (
+        df["plan_total_hrs"] - df["cum_passed_hrs"]
+    ).clip(lower=0)
+    df["extra_hrs_ratio_done"] = (
+        df["cum_passed_hrs"] / df["plan_total_hrs"].replace(0, np.nan)
+    ).fillna(0).clip(0, 1)
+    df["extra_is_near_graduation"] = (
+        df["extra_hrs_remaining"] <= 33
+    ).astype(int)
+    return df.drop(
+        columns=["prev_cum_gpa", "prev_cum_hrs", "sem_credits", "plan_total_hrs"]
+    )
+
+
+def check_prereqs_met(passed_set, target_course, include_concurrent=False):
+    """Check if all prerequisites for target_course are in passed_set."""
+    reqs = prereq_map.get(target_course, [])
+    if not reqs:
+        return 1
+    for pc, conc in reqs:
+        if pc in passed_set:
+            continue
+        if include_concurrent and conc:
+            continue
+        return 0
+    return 1
+
+
+def assemble_for_course(snap_df, target_course, meta_dict):
+    """Assemble the feature matrix for a single target course."""
+    df = snap_df[snap_df["_enrolled_next"].notna()].copy()
+    y = df["_enrolled_next"].apply(lambda s: int(target_course in s))
+    meta = df[["student_id", "snapshot_sem", "sem_sort_key", "next_sem"]].copy()
+    feats = pd.DataFrame(index=df.index)
+
+    if meta_dict["feature_flags"]["USE_CORE_STUDENT_FEATURES"]:
+        for c in CAT_FEATURES + NUM_FEATURES_STUDENT:
+            feats[c] = df[c].values
+        passed_cols = [f"passed_{c}" for c in all_course_codes]
+        failed_cols = [f"failed_{c}" for c in all_course_codes]
+        feats[passed_cols] = df[passed_cols].values
+        feats[failed_cols] = df[failed_cols].values
+
+    if meta_dict["feature_flags"]["USE_COURSE_TIMESERIES_FEATURES"]:
+        ts_map = course_ts_lookup.get(target_course, {})
+        ts_per_row = [
+            ts_map.get(int(sk), COURSE_TS_DEFAULTS)
+            for sk in df["sem_sort_key"].values
+        ]
+        ts_df = pd.DataFrame(ts_per_row, index=df.index).fillna(0)
+        for c in COURSE_TS_COLS:
+            feats[c] = ts_df[c].values
+
+    if meta_dict["feature_flags"]["USE_COURSE_METADATA_FEATURES"]:
+        meta_ = course_meta_lookup.get(target_course, COURSE_META_DEFAULTS)
+        for c in COURSE_META_COLS:
+            feats[c] = meta_[c]
+
+    if meta_dict["feature_flags"]["USE_V3_EXTRA_FEATURES"]:
+        for c in V3_EXTRA_STUDENT_LEVEL:
+            feats[c] = df[c].values
+        feats["extra_is_in_plan"] = df["plan_key"].apply(
+            lambda pk: int(target_course in plan_course_map.get(pk, set()))
+        ).values
+        passed_col = f"passed_{target_course}"
+        failed_col = f"failed_{target_course}"
+        feats["extra_already_passed"] = (
+            df[passed_col].values if passed_col in df.columns else 0
+        )
+        feats["extra_has_failed_before"] = (
+            df[failed_col].values if failed_col in df.columns else 0
+        )
+        feats["extra_prereqs_satisfied"] = df["_passed_set"].apply(
+            lambda s: check_prereqs_met(s, target_course, False)
+        ).values
+        feats["extra_prereqs_satisfied_with_concurrent"] = df["_passed_set"].apply(
+            lambda s: check_prereqs_met(s, target_course, True)
+        ).values
+        target_cat = course_meta_lookup.get(target_course, {}).get("category_ord", 0)
+        same_cat_courses = set(
+            c for c, m in course_meta_lookup.items()
+            if m.get("category_ord", 0) == target_cat
+        )
+        denom = max(len(same_cat_courses), 1)
+        feats["extra_same_category_pass_rate"] = df["_passed_set"].apply(
+            lambda s: len(s & same_cat_courses) / denom
+        ).values
+
+    return feats, y, meta
+
+
+def build_X(feats_df, ohe_encoder, scaler=None, fit_scaler=False,
+            cat_features=None, num_features_student=None,
+            numeric_extras=None, extra_flags=None):
+    """Encode and scale features into the final numpy matrix."""
+    cat_features = cat_features or []
+    num_features_student = num_features_student or []
+    numeric_extras = numeric_extras or []
+    extra_flags = extra_flags or []
+
+    if len(feats_df) == 0:
+        feature_names = []
+        if cat_features:
+            feature_names.extend(
+                ohe_encoder.get_feature_names_out(cat_features).tolist()
+            )
+        feature_names.extend(num_features_student + numeric_extras + extra_flags)
+        return np.empty((0, len(feature_names))), scaler, feature_names
+
+    parts = []
+    feature_names = []
+
+    if cat_features:
+        cat_arr = ohe_encoder.transform(feats_df[cat_features])
+        parts.append(cat_arr)
+        feature_names.extend(
+            ohe_encoder.get_feature_names_out(cat_features).tolist()
+        )
+
+    num_cols_all = num_features_student + numeric_extras
+    if num_cols_all:
+        num_arr = feats_df[num_cols_all].values.astype(float)
+        if scaler is None:
+            scaler = StandardScaler()
+        if fit_scaler:
+            scaler.fit(num_arr)
+        num_arr = scaler.transform(num_arr)
+        parts.append(num_arr)
+        feature_names.extend(num_cols_all)
+
+    if extra_flags:
+        flag_arr = feats_df[extra_flags].values.astype(float)
+        parts.append(flag_arr)
+        feature_names.extend(extra_flags)
+
+    X = (
+        np.concatenate(parts, axis=1) if parts
+        else np.empty((len(feats_df), 0))
+    )
+    return X, scaler, feature_names
+
+
+def split_feature_columns(feats_df, meta_dict):
+    """Partition feature columns into categorical, numeric, and flag groups."""
+    cat_cols = [c for c in CAT_FEATURES if c in feats_df.columns]
+    core_num_cols = [c for c in NUM_FEATURES_STUDENT if c in feats_df.columns]
+
+    ts_cols = (
+        [c for c in COURSE_TS_COLS if c in feats_df.columns]
+        if meta_dict["feature_flags"]["USE_COURSE_TIMESERIES_FEATURES"]
+        else []
+    )
+
+    meta_num_cols = (
+        [c for c in ["credit_hours", "lecture_hours", "lab_hours"]
+         if c in feats_df.columns]
+        if meta_dict["feature_flags"]["USE_COURSE_METADATA_FEATURES"]
+        else []
+    )
+    meta_flag_cols = (
+        [c for c in ["category_ord", "is_compulsory"]
+         if c in feats_df.columns]
+        if meta_dict["feature_flags"]["USE_COURSE_METADATA_FEATURES"]
+        else []
+    )
+
+    v3_num_cols = (
+        [c for c in [
+            "extra_gpa_trend", "extra_avg_credits_per_sem",
+            "extra_hrs_remaining", "extra_hrs_ratio_done",
+            "extra_same_category_pass_rate",
+        ] if c in feats_df.columns]
+        if meta_dict["feature_flags"]["USE_V3_EXTRA_FEATURES"]
+        else []
+    )
+    v3_flag_cols = (
+        [c for c in [
+            "extra_is_near_graduation", "extra_is_in_plan",
+            "extra_already_passed", "extra_has_failed_before",
+            "extra_prereqs_satisfied",
+            "extra_prereqs_satisfied_with_concurrent",
+        ] if c in feats_df.columns]
+        if meta_dict["feature_flags"]["USE_V3_EXTRA_FEATURES"]
+        else []
+    )
+
+    bin_cols = [
+        c for c in feats_df.columns
+        if c.startswith("passed_") or c.startswith("failed_")
+    ]
+
+    numeric_extras = ts_cols + meta_num_cols + v3_num_cols
+    extra_flags = meta_flag_cols + v3_flag_cols + bin_cols
+
+    return cat_cols, core_num_cols, numeric_extras, extra_flags
+
+
+# ── 3. The Main Inference Function ────────────────────────────────────────────
+
+def predict_next_semester(
+    current_enrolls, current_students, artifacts_dir=ARTIFACTS_DIR,
+    next_sem_label=None, section_cap=None, buffer_pct=None,
+):
+    """
+    Run inference for the next semester.
+
+    Parameters
+    ----------
+    current_enrolls : pd.DataFrame
+        Must contain: student_id, course_code, year, term, semester_label,
+        grade, credit_hours.
+    current_students : pd.DataFrame
+        Must contain: student_id, major, degree_type, admission_year,
+        needs_rem_arabic, needs_rem_english, needs_rem_math.
+        Optional: plan_key (auto-derived from major + degree_type if absent).
+    artifacts_dir : str
+        Path to the artifacts folder containing .pkl files.
+    next_sem_label : str or None
+        Override for the predicted semester label.
+    section_cap : int or None
+        Students per section (default from inference_meta.json).
+    buffer_pct : float or None
+        Buffer percentage for section count (default from inference_meta.json).
+
+    Returns
+    -------
+    (student_predictions_df, demand_df, sections_df, latest_snap)
+    """
+    global prereq_map, plan_course_map, course_ts_lookup
+    global course_meta_lookup, all_course_codes
+
+    with open(os.path.join(artifacts_dir, "inference_meta.json")) as f:
+        meta = json.load(f)
+
+    ohe_               = joblib.load(os.path.join(artifacts_dir, "ohe.pkl"))
+    prereq_map         = joblib.load(os.path.join(artifacts_dir, "prereq_map.pkl"))
+    plan_course_map    = joblib.load(os.path.join(artifacts_dir, "plan_course_map.pkl"))
+    course_ts_lookup   = joblib.load(os.path.join(artifacts_dir, "course_ts_lookup.pkl"))
+    course_meta_lookup = joblib.load(os.path.join(artifacts_dir, "course_meta_lookup.pkl"))
+    all_course_codes   = joblib.load(os.path.join(artifacts_dir, "all_course_codes.pkl"))
+
+    manifest_ = pd.read_csv(
+        os.path.join(artifacts_dir, "model_manifest.csv"),
+        dtype={"course_code": str},
+    )
+    # Rebase relative paths to absolute using artifacts_dir as the root
+    manifest_["path"] = manifest_["path"].apply(
+        lambda p: os.path.join(artifacts_dir, os.path.basename(os.path.dirname(p)), os.path.basename(p))
+    )
+
+    section_cap = section_cap or meta["section_cap"]
+    buffer_pct = (
+        buffer_pct if buffer_pct is not None
+        else meta["sections_buffer_pct"]
+    )
+
+    # ── Build LATEST snapshot ──────────────────────────────────────────────
+    enrolls_ = current_enrolls.copy()
+    enrolls_["course_code"] = enrolls_["course_code"].astype(str).str.strip()
+    enrolls_["sem_sort_key"] = (
+        enrolls_["year"].astype(int) * 10
+        + enrolls_["term"].map(meta["term_order"])
+    )
+    enrolls_ = (
+        enrolls_.sort_values(["student_id", "sem_sort_key"])
+        .reset_index(drop=True)
+    )
+
+    latest_snap = build_snapshots(
+        enrolls_, current_students, all_course_codes, horizon=1
+    )
+    latest_snap = (
+        latest_snap.sort_values(["student_id", "sem_sort_key"])
+        .groupby("student_id").tail(1)
+        .reset_index(drop=True)
+    )
+    latest_snap["_enrolled_next"] = [set() for _ in range(len(latest_snap))]
+
+    if meta["feature_flags"]["USE_V3_EXTRA_FEATURES"]:
+        latest_snap = add_v3_student_level(latest_snap)
+        if "_passed_set" not in latest_snap.columns:
+            passed_cols_full = [f"passed_{c}" for c in all_course_codes]
+            arr = latest_snap[passed_cols_full].values
+            latest_snap["_passed_set"] = [
+                set(all_course_codes[j] for j in np.where(row == 1)[0])
+                for row in arr
+            ]
+
+    # ── Infer next semester label ──────────────────────────────────────────
+    if next_sem_label is None:
+        latest_key = latest_snap["sem_sort_key"].max()
+        y = int(latest_key // 10)
+        t = int(latest_key % 10)
+        if t == 3:
+            next_sem_label = f"{y + 1}_Fall"
+        elif t == 1:
+            next_sem_label = f"{y}_Spring"
+        else:
+            next_sem_label = f"{y}_Summer"
+
+    # ── Per-student per-course predictions ─────────────────────────────────
+    pred_rows = []
+    for _, row in manifest_.iterrows():
+        course_code = row["course_code"]
+        bundle = joblib.load(row["path"])
+        model = bundle["model"]
+        scaler = bundle["scaler"]
+
+        feats_all, _, meta_all = assemble_for_course(
+            latest_snap, course_code, meta
+        )
+        if len(feats_all) == 0:
+            continue
+
+        cat_c, core_n, num_ext, ext_flags = split_feature_columns(
+            feats_all, meta
+        )
+        X, _, _ = build_X(
+            feats_all, ohe_encoder=ohe_, scaler=scaler, fit_scaler=False,
+            cat_features=cat_c, num_features_student=core_n,
+            numeric_extras=num_ext, extra_flags=ext_flags,
+        )
+
+        probs = (
+            model.predict_proba(X)[:, 1]
+            if hasattr(model, "predict_proba")
+            else model.predict(X).astype(float)
+        )
+
+        for (_, mrow), p in zip(meta_all.iterrows(), probs):
+            pred_rows.append({
+                "student_id":  mrow["student_id"],
+                "course_code": course_code,
+                "next_sem":    next_sem_label,
+                "prob_enroll": float(p),
+                "pred_enroll": int(p >= meta["enroll_threshold"]),
+            })
+
+    student_predictions_df = pd.DataFrame(pred_rows)
+    if len(student_predictions_df) == 0:
+        empty = pd.DataFrame()
+        return empty, empty, empty, latest_snap
+
+    # ── Aggregate to course-level demand ───────────────────────────────────
+    demand_df = (
+        student_predictions_df
+        .groupby(["next_sem", "course_code"])
+        .agg(
+            predicted_count=("prob_enroll", "sum"),
+            predicted_binary=("pred_enroll", "sum"),
+        )
+        .reset_index()
+    )
+    demand_df["predicted_count"] = (
+        demand_df["predicted_count"].round().astype(int)
+    )
+    demand_df["course_code"] = demand_df["course_code"].astype(str)
+
+    # ── Section recommendations ────────────────────────────────────────────
+    demand_df["predicted_sections"] = np.ceil(
+        demand_df["predicted_count"] * (1 + buffer_pct) / section_cap
+    ).astype(int)
+
+    sections_df = demand_df[[
+        "course_code", "predicted_count", "predicted_sections",
+    ]].copy()
+
+    return student_predictions_df, demand_df, sections_df, latest_snap
+
+
+# ── 4. Explainable AI (SHAP) Helpers ──────────────────────────────────────────
+
+def explain_live_student(
+    student_id, course_code, latest_snap,
+    artifacts_dir=ARTIFACTS_DIR, top_k=10,
+):
+    """
+    SHAP explanation for a single student-course prediction.
+
+    Returns a DataFrame with columns [feature, value, contribution],
+    sorted by absolute contribution descending, or None if no explainer.
+    """
+    import shap  # noqa: F811 — lazy import to avoid loading on server start
+
+    shap_path = os.path.join(
+        artifacts_dir, "shap_explainers", f"{course_code}.pkl"
+    )
+    if not os.path.exists(shap_path):
+        return None
+
+    with open(os.path.join(artifacts_dir, "inference_meta.json")) as f:
+        meta = json.load(f)
+
+    explainer = joblib.load(shap_path)
+    ohe_ = joblib.load(os.path.join(artifacts_dir, "ohe.pkl"))
+    manifest = pd.read_csv(
+        os.path.join(artifacts_dir, "model_manifest.csv"),
+        dtype={"course_code": str},
+    )
+
+    raw_path = manifest.loc[
+        manifest["course_code"] == str(course_code), "path"
+    ].values[0]
+    bundle_path = os.path.join(
+        artifacts_dir,
+        os.path.basename(os.path.dirname(raw_path)),
+        os.path.basename(raw_path),
+    )
+    bundle = joblib.load(bundle_path)
+
+    row = latest_snap[latest_snap["student_id"] == student_id]
+    if len(row) == 0:
+        return None
+
+    feats, _, _ = assemble_for_course(row, str(course_code), meta)
+    cat_c, core_n, num_ext, ext_flags = split_feature_columns(feats, meta)
+    X, _, fn = build_X(
+        feats, ohe_encoder=ohe_, scaler=bundle["scaler"], fit_scaler=False,
+        cat_features=cat_c, num_features_student=core_n,
+        numeric_extras=num_ext, extra_flags=ext_flags,
+    )
+
+    shap_values = explainer.shap_values(X)
+    if isinstance(shap_values, list):
+        shap_values = shap_values[1]
+    elif hasattr(shap_values, "shape") and len(shap_values.shape) == 3:
+        shap_values = shap_values[:, :, 1]
+
+    out = pd.DataFrame({
+        "feature":      fn,
+        "value":        np.array(X[0]).flatten(),
+        "contribution": np.array(shap_values[0]).flatten(),
+    })
+    out["abs_contribution"] = out["contribution"].abs()
+
+    return (
+        out.sort_values("abs_contribution", ascending=False)
+        .head(top_k)[["feature", "value", "contribution"]]
+    )
+
+
+def explain_live_course_demand(
+    course_code, latest_snap, student_predictions_df,
+    artifacts_dir=ARTIFACTS_DIR, top_k=10,
+):
+    """
+    Aggregate SHAP explanation: which features drive demand for a course.
+
+    Returns a DataFrame with [feature, mean_contribution,
+    mean_abs_contribution], or None if no explainer / no predicted students.
+    """
+    import shap  # noqa: F811
+
+    shap_path = os.path.join(
+        artifacts_dir, "shap_explainers", f"{course_code}.pkl"
+    )
+    if not os.path.exists(shap_path):
+        return None
+
+    enrolled_students = student_predictions_df[
+        (student_predictions_df["course_code"] == str(course_code))
+        & (student_predictions_df["pred_enroll"] == 1)
+    ]["student_id"].values
+
+    if len(enrolled_students) == 0:
+        return None
+
+    course_snap = latest_snap[
+        latest_snap["student_id"].isin(enrolled_students)
+    ]
+
+    with open(os.path.join(artifacts_dir, "inference_meta.json")) as f:
+        meta = json.load(f)
+
+    explainer = joblib.load(shap_path)
+    ohe_ = joblib.load(os.path.join(artifacts_dir, "ohe.pkl"))
+    manifest = pd.read_csv(
+        os.path.join(artifacts_dir, "model_manifest.csv"),
+        dtype={"course_code": str},
+    )
+
+    raw_path = manifest.loc[
+        manifest["course_code"] == str(course_code), "path"
+    ].values[0]
+    bundle_path = os.path.join(
+        artifacts_dir,
+        os.path.basename(os.path.dirname(raw_path)),
+        os.path.basename(raw_path),
+    )
+    bundle = joblib.load(bundle_path)
+
+    feats_all, _, _ = assemble_for_course(
+        course_snap, str(course_code), meta
+    )
+    cat_c, core_n, num_ext, ext_flags = split_feature_columns(feats_all, meta)
+    X, _, fn = build_X(
+        feats_all, ohe_encoder=ohe_, scaler=bundle["scaler"], fit_scaler=False,
+        cat_features=cat_c, num_features_student=core_n,
+        numeric_extras=num_ext, extra_flags=ext_flags,
+    )
+
+    shap_values = explainer.shap_values(X)
+    if isinstance(shap_values, list):
+        shap_values = shap_values[1]
+    elif hasattr(shap_values, "shape") and len(shap_values.shape) == 3:
+        shap_values = shap_values[:, :, 1]
+
+    agg_df = pd.DataFrame({
+        "feature":              fn,
+        "mean_contribution":     np.mean(shap_values, axis=0),
+        "mean_abs_contribution": np.mean(np.abs(shap_values), axis=0),
+    })
+
+    return (
+        agg_df.sort_values("mean_abs_contribution", ascending=False)
+        .head(top_k)[["feature", "mean_contribution", "mean_abs_contribution"]]
+    )

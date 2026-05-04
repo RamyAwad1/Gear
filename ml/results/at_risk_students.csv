@@ -1,0 +1,7 @@
+student_id,major,degree_type,semesters_taken,threshold_sems,retake_count,final_cum_gpa,total_passed_hrs,status,at_risk,high_risk
+202000256,CS,Bachelor,15,14.0,10,3.03,133,Active,True,True
+202102541,AI,Technical,11,10.0,8,2.81,105,Active,True,True
+202101005,AI,Technical,11,10.0,6,3.1,105,Active,True,False
+202100083,Cyber,Technical,11,10.0,5,2.76,99,Active,True,False
+202000561,AI,Bachelor,15,14.0,5,3.09,136,Active,True,False
+202001613,Cyber,Bachelor,15,14.0,5,3.05,133,Active,True,False
