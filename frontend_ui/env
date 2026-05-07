@@ -1,0 +1,5 @@
+# Frontend environment variables (read by Vite at build time).
+# Variables prefixed with VITE_ are exposed to the client bundle.
+
+# Base URL for the Gear backend. Default is the Django dev server.
+VITE_API_BASE=http://127.0.0.1:8000
