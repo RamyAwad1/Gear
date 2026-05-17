@@ -5,7 +5,7 @@ from django.contrib import admin
 from .models import (
     Department, AppUser, Course, StudyPlan, Student, 
     EnrollmentHistory, PredictionRun, CoursePrediction, 
-    PredictionExplanation, FlaggedStudent
+    PredictionExplanation, FlaggedStudent, SubstituteRequest
 )
 
 #Register your models here.
@@ -19,3 +19,4 @@ admin.site.register(PredictionRun)
 admin.site.register(CoursePrediction)
 admin.site.register(PredictionExplanation)
 admin.site.register(FlaggedStudent)
+admin.site.register(SubstituteRequest)

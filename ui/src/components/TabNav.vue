@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Tab navigation strip. Five tabs to mirror the mockup, but only two are
- * wired up in this slice — the rest are visible-but-disabled so adding
- * them later is a one-line change in this file.
+ * Tab navigation strip. All five tabs are now wired up to real views.
+ * Disabled state remains in the prop shape so individual tabs can be
+ * temporarily turned off for maintenance without removing the entry.
  */
 
 import type { TabKey } from '@/types'
@@ -14,11 +14,12 @@ interface TabDef {
 }
 
 const tabs: TabDef[] = [
-  { key: 'dashboard', label: 'Dashboard', enabled: false },
+  { key: 'dashboard', label: 'Dashboard', enabled: true },
   { key: 'predictions', label: 'Predictions', enabled: true },
   { key: 'data-management', label: 'Data Management', enabled: true },
-  { key: 'flagged-students', label: 'Flagged Students', enabled: false },
-  { key: 'elective-requests', label: 'Elective Requests', enabled: false },
+  { key: 'flagged-students', label: 'Flagged Students', enabled: true },
+  { key: 'elective-requests', label: 'Elective Requests', enabled: true },
+  { key: 'substitute-requests', label: 'Substitute Requests', enabled: true},
 ]
 
 defineProps<{ modelValue: TabKey }>()

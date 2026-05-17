@@ -8,10 +8,11 @@
  * Data Management tab.
  */
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import SummaryCard from '@/components/SummaryCard.vue'
+import PredictedStudentsModal from '@/components/PredictedStudentsModal.vue'
 import { usePredictionsStore } from '@/stores/predictions'
-import type { CourseStatus } from '@/types'
+import type { CoursePrediction, CourseStatus } from '@/types'
 
 const emit = defineEmits<{ 'go-upload': [] }>()
 const store = usePredictionsStore()
@@ -34,10 +35,22 @@ const semesterDisplay = computed(() => {
 function formatActual(n: number | null): string {
   return n === null ? 'N/A' : `${n}`
 }
+
+// ── Predicted-students modal state ──────────────────────────────────
+const selectedCourse = ref<CoursePrediction | null>(null)
+const modalOpen = ref(false)
+
+function openCourseDetails(course: CoursePrediction) {
+  selectedCourse.value = course
+  modalOpen.value = true
+}
+
+function closeCourseDetails() {
+  modalOpen.value = false
+}
 </script>
 
 <template>
-  <!-- Empty state -->
   <div
     v-if="!store.hasResult"
     class="rounded-xl border border-slate-200 bg-white p-12 text-center shadow-sm"
@@ -76,9 +89,7 @@ function formatActual(n: number | null): string {
     </button>
   </div>
 
-  <!-- Result -->
   <div v-else class="space-y-6">
-    <!-- Summary row -->
     <div class="grid gap-4 md:grid-cols-4">
       <SummaryCard
         label="Predicted Enrollment"
@@ -98,7 +109,6 @@ function formatActual(n: number | null): string {
       />
     </div>
 
-    <!-- Table card -->
     <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
       <div
         class="flex items-center justify-between border-b border-slate-100 px-6 py-5"
@@ -108,7 +118,7 @@ function formatActual(n: number | null): string {
             Course Predictions — {{ semesterDisplay }}
           </h3>
           <p class="mt-0.5 text-sm text-slate-500">
-            AI-powered enrollment forecasting
+            AI-powered enrollment forecasting. Click a course to see predicted students.
           </p>
         </div>
         <div class="text-xs text-slate-400">
@@ -153,7 +163,8 @@ function formatActual(n: number | null): string {
             <tr
               v-for="course in store.coursesSortedByDemand"
               :key="course.course_code"
-              class="transition hover:bg-slate-50/50"
+              class="cursor-pointer transition hover:bg-slate-50/50"
+              @click="openCourseDetails(course)"
             >
               <td class="px-6 py-4">
                 <div class="font-medium text-slate-900">
@@ -187,4 +198,10 @@ function formatActual(n: number | null): string {
       </div>
     </div>
   </div>
+
+  <PredictedStudentsModal
+    :course="selectedCourse"
+    :is-open="modalOpen"
+    @close="closeCourseDetails"
+  />
 </template>

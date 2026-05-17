@@ -156,3 +156,56 @@ class FlaggedStudent(models.Model):
 
     def __str__(self):
         return f"Flagged: {self.student.student_university_id} — {self.reason}"
+
+
+class SubstituteRequest(models.Model):
+    """
+    A request from a student to substitute one required course in their
+    graduation plan with a different course.
+
+    student_id is a plain CharField (not a ForeignKey) because the
+    current pipeline does not persist Student records from uploaded
+    CSV files. When student persistence is added later this can be
+    upgraded to a ForeignKey without changing the API contract.
+    """
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
+
+    student_id = models.CharField(max_length=50)
+    # The course the student needs to graduate
+    original_course_code = models.CharField(max_length=20)
+    original_course_title = models.CharField(max_length=255, blank=True)
+    # The course they want to take instead
+    substitute_course_code = models.CharField(max_length=20)
+    substitute_course_title = models.CharField(max_length=255, blank=True)
+    reason = models.TextField()
+
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="pending"
+    )
+    reviewer_notes = models.TextField(blank=True)
+    reviewer = models.ForeignKey(
+        AppUser, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reviewed_substitute_requests",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["student_id", "status"]),
+            models.Index(fields=["status", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"SubReq #{self.id}: {self.student_id} "
+            f"{self.original_course_code} -> {self.substitute_course_code} "
+            f"[{self.status}]"
+        )

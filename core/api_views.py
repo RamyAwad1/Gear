@@ -158,11 +158,18 @@ def _coerce_students(df):
     return df
 
 
-def _last_semester_actuals(enrolls_df):
+def _last_semester_actuals(enrolls_df, target_term=None):
     """
     Compute the actual number of students that took each course in the
-    most recent semester present in the uploaded enrollments — used as
-    the 'LAST SEMESTER' column in the mockup.
+    most recent *comparable* semester — i.e. the most recent past
+    semester whose term matches what we're predicting next.
+
+    If we're predicting Spring 2025, this returns Spring 2024 counts
+    (not Fall 2025) so the dashboard's "Last Semester" column is an
+    apples-to-apples comparison.
+
+    target_term should be one of "Fall", "Spring", "Summer". If None,
+    falls back to the most recent semester of any term.
     """
     if "sem_sort_key" not in enrolls_df.columns:
         sort_keys = enrolls_df["year"].astype(int) * 10 + enrolls_df["term"].map(
@@ -172,8 +179,20 @@ def _last_semester_actuals(enrolls_df):
         sort_keys = enrolls_df["sem_sort_key"]
 
     df = enrolls_df.assign(_sort=sort_keys)
-    last_key = df["_sort"].max()
-    last_df = df[df["_sort"] == last_key]
+
+    if target_term is not None:
+        df_term = df[df["term"] == target_term]
+        if len(df_term) > 0:
+            last_key = df_term["_sort"].max()
+            last_df = df_term[df_term["_sort"] == last_key]
+        else:
+            # Course was never offered in target term — fall back so the
+            # column isn't blank.
+            last_key = df["_sort"].max()
+            last_df = df[df["_sort"] == last_key]
+    else:
+        last_key = df["_sort"].max()
+        last_df = df[df["_sort"] == last_key]
 
     counts = (
         last_df.groupby("course_code")["student_id"]
@@ -306,7 +325,6 @@ def predict_upload(request):
         )
 
     # 6. Build the response
-    last_actuals = _last_semester_actuals(enrolls_df)
     titles = _course_titles_lookup(enrolls_df)
 
     predicted_sem = (
@@ -314,6 +332,71 @@ def predict_upload(request):
         if "next_sem" in student_preds_df.columns and len(student_preds_df) > 0
         else next_sem_label or ""
     )
+    # Compare against the same term we're predicting — e.g. predicting
+    # Spring 2025 means the "Last Semester" column should show Spring 2024
+    # actuals, not Fall 2025. Otherwise the dashboard compares Spring
+    # predictions to Fall actuals, which is structurally meaningless.
+    predicted_term = (
+        predicted_sem.split("_")[-1] if predicted_sem and "_" in predicted_sem
+        else None
+    )
+    last_actuals = _last_semester_actuals(enrolls_df, target_term=predicted_term)
+
+    # Build per-course predicted-student lists from the inference output.
+    # student_preds_df has columns: student_id, course_code, reason,
+    # confidence, next_sem. Enrich each row with the student's profile so
+    # the dashboard can show major/year/GPA alongside the prediction.
+    student_lookup = {}
+    if len(students_df) > 0:
+        s_idx = students_df.set_index(students_df["student_id"].astype(str))
+        for sid, row in s_idx.iterrows():
+            # Approximate current academic year from earned credit hours.
+            # 33 hrs / year is the HTU typical full-time load.
+            cum_hrs = 0
+            if "total_passed_hrs" in row.index:
+                try:
+                    cum_hrs = int(row["total_passed_hrs"])
+                except (TypeError, ValueError):
+                    cum_hrs = 0
+            current_year = max(1, min(4, cum_hrs // 33 + 1))
+            student_lookup[sid] = {
+                "student_id":  sid,
+                "major":       str(row.get("major", "") or ""),
+                "degree_type": str(row.get("degree_type", "") or ""),
+                "plan_key":    str(row.get("plan_key", "") or ""),
+                "admission_year": (
+                    int(row["admission_year"])
+                    if "admission_year" in row.index
+                    and pd.notna(row["admission_year"]) else None
+                ),
+                "current_year": current_year,
+                "cum_hrs":      cum_hrs,
+                "gpa": (
+                    float(row["final_cum_gpa"])
+                    if "final_cum_gpa" in row.index
+                    and pd.notna(row["final_cum_gpa"]) else None
+                ),
+            }
+
+    # Group identified candidates by course
+    candidates_by_course = {}
+    if len(student_preds_df) > 0 and "course_code" in student_preds_df.columns:
+        for cc, grp in student_preds_df.groupby("course_code"):
+            rows = []
+            for _, r in grp.iterrows():
+                sid = str(r["student_id"])
+                profile = student_lookup.get(sid, {"student_id": sid})
+                rows.append({
+                    **profile,
+                    "reason":     str(r["reason"]),
+                    "confidence": float(r["confidence"]),
+                })
+            # Sort: higher confidence first, retake before predecessor on ties
+            rows.sort(
+                key=lambda x: (-x["confidence"],
+                               0 if x["reason"] == "retake_candidate" else 1)
+            )
+            candidates_by_course[str(cc)] = rows
 
     courses_payload = []
     for _, row in sections_df.sort_values(
@@ -322,6 +405,7 @@ def predict_upload(request):
         cc = str(row["course_code"])
         predicted = int(row["predicted_count"])
         actual = last_actuals.get(cc)
+        candidates = candidates_by_course.get(cc, [])
         courses_payload.append({
             "course_code":           cc,
             "course_title":          titles.get(cc, ""),
@@ -329,6 +413,13 @@ def predict_upload(request):
             "sections_needed":       int(row["predicted_sections"]),
             "last_semester_actual":  actual,  # may be None
             "status":                _classify_status(predicted, actual),
+            # Identified students who are predicted to enrol. For TS-
+            # dominated courses this may be fewer than predicted_enrollment
+            # because TS aggregates don't identify specific students. The
+            # frontend should display predicted_enrollment as the count and
+            # this list as "who we can name."
+            "predicted_students":    candidates,
+            "identified_count":      len(candidates),
         })
 
     response = {

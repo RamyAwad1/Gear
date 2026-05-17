@@ -1,83 +1,120 @@
-/**
- * Tiny axios wrapper around the Gear API.
- *
- * Base URL is read from VITE_API_BASE (set in `.env`). When unset, falls
- * back to the Django dev server's default address so a fresh clone works
- * without configuration.
- */
+// API client for the Django backend.
 
-import axios, { AxiosError } from 'axios'
-import type { ApiError, PredictionResponse } from '@/types'
+import type {
+  CoursePrediction,
+  PredictedStudent,
+  PredictionResponse,
+  PredictionTotals,
+  ApiError,
+  SubstituteRequest,
+  SubstituteRequestCreate,
+  SubstituteRequestUpdate,
+  SubstituteRequestStatus,
+} from "@/types";
 
-const baseURL = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000'
+export type {
+  CoursePrediction,
+  PredictedStudent,
+  PredictionResponse,
+  PredictionTotals,
+  ApiError,
+  SubstituteRequest,
+  SubstituteRequestCreate,
+  SubstituteRequestUpdate,
+};
 
-export const apiClient = axios.create({
-  baseURL,
-  // The first prediction request loads ~94 model .pkl files into memory and
-  // can take 30-60s on a cold server. Give it a generous ceiling so axios
-  // doesn't abort the request before Django finishes.
-  timeout: 5 * 60 * 1000, // 5 minutes
-})
+const API_BASE: string =
+  (typeof window !== "undefined" &&
+    (window as unknown as { __API_BASE__?: string }).__API_BASE__) ||
+  "http://localhost:8000";
 
-export interface PredictUploadOptions {
-  semester?: string
-  sectionCap?: number
-  bufferPct?: number
+async function raiseFor(res: Response): Promise<never> {
+  const err = (await res.json().catch(() => ({}))) as Partial<ApiError>;
+  throw new Error(err.error || err.detail || `HTTP ${res.status}`);
 }
 
-/**
- * POST both CSVs to /api/predict/upload/ and return the parsed response.
- *
- * Throws an Error with a human-readable `.message` derived from the
- * backend's error body (or a generic network error message) when the
- * request fails — components only need to catch one thing.
- */
+// ─── Predictions ─────────────────────────────────────────────────────────────
+
+export type PredictUploadOptions = {
+  semester?: string;
+  sectionCap?: number;
+  bufferPct?: number;
+};
+
 export async function predictUpload(
   enrollmentsFile: File,
   studentsFile: File,
-  opts: PredictUploadOptions = {},
+  options: PredictUploadOptions = {}
 ): Promise<PredictionResponse> {
-  const formData = new FormData()
-  formData.append('enrollments_file', enrollmentsFile)
-  formData.append('students_file', studentsFile)
-  if (opts.semester) formData.append('semester', opts.semester)
-  if (opts.sectionCap !== undefined)
-    formData.append('section_cap', String(opts.sectionCap))
-  if (opts.bufferPct !== undefined)
-    formData.append('buffer_pct', String(opts.bufferPct))
+  const form = new FormData();
+  form.append("enrollments_file", enrollmentsFile);
+  form.append("students_file", studentsFile);
+  if (options.semester) form.append("semester", options.semester);
+  if (options.sectionCap !== undefined)
+    form.append("section_cap", String(options.sectionCap));
+  if (options.bufferPct !== undefined)
+    form.append("buffer_pct", String(options.bufferPct));
 
-  try {
-    const { data } = await apiClient.post<PredictionResponse>(
-      '/api/predict/upload/',
-      formData,
-    )
-    return data
-  } catch (err) {
-    throw new Error(formatAxiosError(err))
-  }
+  const res = await fetch(`${API_BASE}/api/predict/upload/`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) await raiseFor(res);
+  return res.json();
 }
 
-function formatAxiosError(err: unknown): string {
-  if (!axios.isAxiosError(err)) {
-    return err instanceof Error ? err.message : 'Unknown error'
-  }
-  const axiosErr = err as AxiosError<ApiError>
-  if (axiosErr.response?.data) {
-    const body = axiosErr.response.data
-    let msg = body.error ?? 'Request failed'
-    if (body.missing_columns?.length) {
-      msg += ` Missing columns: ${body.missing_columns.join(', ')}.`
-    }
-    if (body.detail) {
-      msg += ` Detail: ${body.detail}`
-    }
-    return msg
-  }
-  if (axiosErr.code === 'ECONNABORTED') {
-    return 'The server took too long to respond. The first prediction can take up to a minute as models load — try once more.'
-  }
-  if (axiosErr.code === 'ERR_NETWORK') {
-    return `Could not reach the API at ${baseURL}. Is the Django server running?`
-  }
-  return axiosErr.message
+export async function healthCheck(): Promise<{ status: string; service: string }> {
+  const res = await fetch(`${API_BASE}/api/health/`);
+  if (!res.ok) await raiseFor(res);
+  return res.json();
+}
+
+// ─── Substitute Requests ─────────────────────────────────────────────────────
+
+type ListResponse = { results: SubstituteRequest[] };
+
+export async function listSubstituteRequests(filter?: {
+  studentId?: string;
+  status?: SubstituteRequestStatus;
+}): Promise<SubstituteRequest[]> {
+  const params = new URLSearchParams();
+  if (filter?.studentId) params.set("student_id", filter.studentId);
+  if (filter?.status) params.set("status", filter.status);
+  const qs = params.toString();
+  const url = `${API_BASE}/api/substitute-requests/${qs ? "?" + qs : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) await raiseFor(res);
+  const body = (await res.json()) as ListResponse;
+  return body.results;
+}
+
+export async function getSubstituteRequest(id: number): Promise<SubstituteRequest> {
+  const res = await fetch(`${API_BASE}/api/substitute-requests/${id}/`);
+  if (!res.ok) await raiseFor(res);
+  return res.json();
+}
+
+export async function createSubstituteRequest(
+  payload: SubstituteRequestCreate
+): Promise<SubstituteRequest> {
+  const res = await fetch(`${API_BASE}/api/substitute-requests/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await raiseFor(res);
+  return res.json();
+}
+
+export async function updateSubstituteRequest(
+  id: number,
+  payload: SubstituteRequestUpdate
+): Promise<SubstituteRequest> {
+  const res = await fetch(`${API_BASE}/api/substitute-requests/${id}/`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await raiseFor(res);
+  return res.json();
 }

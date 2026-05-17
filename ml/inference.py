@@ -1,680 +1,443 @@
 """
-HTU Intelligent Registration System — Inference Module
-=======================================================
-This module is the Django-facing bridge to the trained ML pipeline.
-It loads pre-trained .pkl artifacts and exposes three public functions:
+Course-level enrollment forecasting — time-series + cohort-flow + retake.
 
-    predict_next_semester()        — per-student enrollment predictions + demand
-    explain_live_student()         — SHAP explanation for one student-course pair
-    explain_live_course_demand()   — aggregate SHAP for one course's demand drivers
+For each course we compute three independent signals and combine them:
 
-No training code, no plotting libraries. Safe to import from Django.
+  1. Time-series:     the course's own per-term history projected forward
+                      with a damped trend. Handles seasonality and slow
+                      growth/decay; blind to current cohort composition.
+
+  2. Cohort-flow:     count students who just passed the inferred
+                      predecessor course and have never taken this one
+                      ("first-time ready pool"), multiplied by the
+                      historical first-time take-rate for that
+                      (predecessor -> course, target term) pair. Handles
+                      cohort dynamics for new takers.
+
+  3. Retake demand:   active students whose most recent attempt at this
+                      course was a failing grade, multiplied by the
+                      historical retake rate for the target term. Captures
+                      students who failed and will likely re-enroll.
+
+Combined as: forecast = max(time_series, cohort_flow + retake_demand).
+The cohort + retake sum is disjoint by construction (first-timers and
+re-takers don't overlap), so they sum cleanly. The max with time-series
+provides a safety net for courses where the cohort signal is weak or
+predecessor inference failed.
+
+No model artefact: everything is computed at request time from the
+uploaded enrollment history. Exposes the same `predict_next_semester`
+signature and four-tuple return as the previous versions, so
+core/api_views.py doesn't change.
 """
+import math
 
-import os
-import json
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
+
+TERM_RANK = {"Fall": 1, "Spring": 2, "Summer": 3}
+PASS_GRADES = {"A", "A-", "B+", "B", "B-", "C+", "C", "C-",
+               "D+", "D", "P", "M"}
+INACTIVE_STATUSES = {"Graduated", "Dropped", "Withdrawn", "Suspended"}
+
+# Predecessor inference: a course P is a predecessor of C if students
+# who take C reliably took P one semester before. These thresholds tune
+# how strict that requirement is.
+PRED_MIN_OBSERVATIONS = 20      # ignore C if seen < N times
+PRED_MIN_PRECEDENCE   = 0.40    # P must precede C in >= 40% of (P then C) pairs
+PRED_MIN_TEMPORAL    = 0.85    # P must be taken before C in 85%+ of cases
 
 
-# ── 1. Configuration & Paths ──────────────────────────────────────────────────
-ML_DIR = os.path.dirname(os.path.abspath(__file__))
-ARTIFACTS_DIR = os.path.join(ML_DIR, "artifacts")
-
-HORIZON = 1
-PLAN_TOTAL_HOURS = {
-    "CS_Bachelor": 135, "CS_Technical": 105,
-    "AI_Bachelor": 135, "AI_Technical": 105,
-    "Cyber_Bachelor": 135, "Cyber_Technical": 105,
-}
-
-CAT_FEATURES = ["major", "degree_type", "prediction_term"]
-NUM_FEATURES_STUDENT = [
-    "admission_year", "cum_gpa", "cum_passed_hrs", "semester_number",
-    "needs_rem_arabic", "needs_rem_english", "needs_rem_math",
-]
-V3_EXTRA_STUDENT_LEVEL = [
-    "extra_gpa_trend", "extra_avg_credits_per_sem",
-    "extra_hrs_remaining", "extra_hrs_ratio_done", "extra_is_near_graduation",
-]
-COURSE_TS_COLS = [
-    "course_lag_1", "course_lag_2", "course_lag_3",
-    "course_roll_mean_3", "course_roll_std_3",
-    "course_yoy_lag", "course_trend", "course_term_mean",
-    "course_fail_pool", "course_eligible_proxy", "new_students",
-]
-COURSE_META_COLS = [
-    "credit_hours", "lecture_hours", "lab_hours", "category_ord", "is_compulsory",
-]
-COURSE_TS_DEFAULTS = {col: 0.0 for col in COURSE_TS_COLS}
-COURSE_META_DEFAULTS = {
-    "credit_hours": 3.0, "lecture_hours": 3.0, "lab_hours": 0.0,
-    "category_ord": 0, "is_compulsory": 0,
-}
-PASSING = {"D", "M", "P"}
+def _next_semester_label(latest_year, latest_term):
+    """HTU calendar: Fall(Y) -> Spring(Y) -> Summer(Y) -> Fall(Y+1)."""
+    if latest_term == "Fall":
+        return f"{latest_year}_Spring"
+    if latest_term == "Spring":
+        return f"{latest_year}_Summer"
+    return f"{latest_year + 1}_Fall"
 
 
-# ── 2. Helper Functions ───────────────────────────────────────────────────────
+def _ts_forecast(history, target_term):
+    """Pure per-course time-series forecast — same as the previous
+    version. Used as the baseline that cohort-flow scales."""
+    same_term = history[history["term"] == target_term].sort_values("sem_key")
+    n = len(same_term)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return float(same_term["n_students"].iloc[0])
+    recent = same_term.tail(3)["n_students"].astype(float).values
+    weights = np.array([1.0, 2.0, 3.0])[-len(recent):]
+    weights /= weights.sum()
+    baseline = float(np.dot(recent, weights))
+    diffs = np.diff(recent)
+    trend = float(np.mean(diffs)) if len(diffs) > 0 else 0.0
+    return max(0.0, baseline + trend * 0.5)
 
-def build_snapshots(enrolls_df, students_df, all_codes, horizon=HORIZON):
-    """Build per-student per-semester snapshot rows from enrollment history."""
-    rows = []
-    by_student = {
-        sid: grp.sort_values("sem_sort_key")
-        for sid, grp in enrolls_df.groupby("student_id")
+
+def _build_predecessor_map(enrolls_df):
+    """
+    For each course C, identify the single predecessor P that students
+    most reliably complete one semester before taking C.
+
+    Returns {course_code -> predecessor_code} for courses where a clear
+    predecessor exists. Courses without a clear predecessor (year-1
+    courses with no prereqs, fresh-elective entry points, etc.) are
+    omitted, and those will fall back to pure time-series at forecast.
+
+    Algorithm: for each student, walk their enrollment history in order.
+    Every time they take course C at semester S, look at the courses
+    they passed in semester S-1; each one casts a "vote" for being C's
+    predecessor. Then for each C, the predecessor is the course with
+    the highest vote count that also satisfies a minimum-support
+    threshold.
+    """
+    passed = enrolls_df[enrolls_df["passed"]].copy()
+    passed = passed.sort_values(["student_id", "sem_key"])
+
+    # For each student, build the chronological list of (sem_key, passed_set).
+    sem_passed = (
+        passed.groupby(["student_id", "sem_key"])["course_code"]
+        .apply(set).reset_index(name="passed_set")
+    )
+
+    # For each (student, sem_key), record what they took in the NEXT semester.
+    taken = enrolls_df.sort_values(["student_id", "sem_key"]).copy()
+    taken_by_sem = (
+        taken.groupby(["student_id", "sem_key"])["course_code"]
+        .apply(set).reset_index(name="taken_set")
+    )
+
+    # Build votes: for each student, for each (prev_sem, next_sem) pair,
+    # every passed-course in prev_sem casts a vote for every course in next_sem.
+    from collections import defaultdict
+    votes = defaultdict(lambda: defaultdict(int))  # C -> {P -> count}
+    c_total = defaultdict(int)                     # how many times C was taken
+
+    by_student_passed = {
+        sid: dict(zip(g["sem_key"], g["passed_set"]))
+        for sid, g in sem_passed.groupby("student_id", sort=False)
     }
-    stu_meta = students_df.set_index("student_id")
-    sorted_codes = sorted(all_codes)
-    code_to_idx = {c: i for i, c in enumerate(sorted_codes)}
+    by_student_taken = {
+        sid: dict(zip(g["sem_key"], g["taken_set"]))
+        for sid, g in taken_by_sem.groupby("student_id", sort=False)
+    }
 
-    for student_id, hist in by_student.items():
-        if student_id not in stu_meta.index:
+    for sid, taken_dict in by_student_taken.items():
+        passed_dict = by_student_passed.get(sid, {})
+        sorted_sems = sorted(taken_dict.keys())
+        for i, sk in enumerate(sorted_sems):
+            if i == 0:
+                continue   # need a previous semester
+            prev_sk = sorted_sems[i - 1]
+            prev_passed = passed_dict.get(prev_sk, set())
+            curr_taken = taken_dict[sk]
+            for C in curr_taken:
+                c_total[C] += 1
+                for P in prev_passed:
+                    if P == C:
+                        continue
+                    votes[C][P] += 1
+
+    # Build the predecessor map under the support thresholds.
+    pred_map = {}
+    for C, total in c_total.items():
+        if total < PRED_MIN_OBSERVATIONS:
             continue
-        meta = stu_meta.loc[student_id]
-        sem_list = (
-            hist[["semester_label", "sem_sort_key"]]
-            .drop_duplicates()
-            .sort_values("sem_sort_key")["semester_label"]
-            .tolist()
-        )
-
-        passed_vec = np.zeros(len(sorted_codes), dtype=np.int8)
-        failed_vec = np.zeros(len(sorted_codes), dtype=np.int8)
-        cum_hrs = 0
-        cum_gpa = 0.0
-
-        for sem_idx, sem_label in enumerate(sem_list):
-            sem_rows = hist[hist["semester_label"] == sem_label]
-            last_rec = sem_rows.sort_values("sem_sort_key").iloc[-1]
-            if "cum_gpa" in last_rec.index and pd.notna(last_rec.get("cum_gpa")):
-                cum_gpa = float(last_rec["cum_gpa"])
-
-            sem_passed_hrs = sem_rows[
-                sem_rows["grade"].isin(PASSING)
-            ]["credit_hours"].sum()
-            cum_hrs += int(sem_passed_hrs)
-
-            for _, rec in sem_rows.iterrows():
-                c = rec["course_code"]
-                if c not in code_to_idx:
-                    continue
-                idx = code_to_idx[c]
-                if rec["grade"] in PASSING:
-                    passed_vec[idx] = 1
-                    failed_vec[idx] = 0
-                elif rec["grade"] in {"U", "W"}:
-                    failed_vec[idx] = 1
-
-            tgt_idx = sem_idx + horizon
-            enrolled_next = None
-            next_sem_label = None
-            if tgt_idx < len(sem_list):
-                next_sem_label = sem_list[tgt_idx]
-                next_rows = hist[hist["semester_label"] == next_sem_label]
-                enrolled_next = set(next_rows["course_code"].tolist())
-
-            sem_term = sem_label.split("_")[1]
-
-            row = {
-                "student_id":        student_id,
-                "snapshot_sem":      sem_label,
-                "sem_sort_key":      sem_rows["sem_sort_key"].iloc[0],
-                "next_sem":          next_sem_label,
-                "major":             meta["major"],
-                "degree_type":       meta["degree_type"],
-                "plan_key":          meta.get(
-                    "plan_key", f"{meta['major']}_{meta['degree_type']}"
-                ),
-                "admission_year":    int(meta["admission_year"]),
-                "needs_rem_arabic":  int(meta.get("needs_rem_arabic", 0)),
-                "needs_rem_english": int(meta.get("needs_rem_english", 0)),
-                "needs_rem_math":    int(meta.get("needs_rem_math", 0)),
-                "cum_gpa":           cum_gpa,
-                "cum_passed_hrs":    int(cum_hrs),
-                "semester_number":   sem_idx + 1,
-                "prediction_term":   sem_term,
-                "_enrolled_next":    enrolled_next,
-            }
-            for c in sorted_codes:
-                idx = code_to_idx[c]
-                row[f"passed_{c}"] = int(passed_vec[idx])
-                row[f"failed_{c}"] = int(failed_vec[idx])
-            rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-def add_v3_student_level(snap_df):
-    """Add V3 student-level engineered features to the snapshot DataFrame."""
-    df = snap_df.copy().sort_values(["student_id", "sem_sort_key"])
-    df["prev_cum_gpa"] = df.groupby("student_id")["cum_gpa"].shift(1)
-    df["extra_gpa_trend"] = (df["cum_gpa"] - df["prev_cum_gpa"]).fillna(0)
-    df["prev_cum_hrs"] = (
-        df.groupby("student_id")["cum_passed_hrs"].shift(1).fillna(0)
-    )
-    df["sem_credits"] = df["cum_passed_hrs"] - df["prev_cum_hrs"]
-    df["extra_avg_credits_per_sem"] = (
-        df.groupby("student_id")["sem_credits"]
-        .transform(lambda x: x.expanding().mean())
-        .fillna(0)
-    )
-    df["plan_total_hrs"] = df["plan_key"].map(PLAN_TOTAL_HOURS).fillna(135)
-    df["extra_hrs_remaining"] = (
-        df["plan_total_hrs"] - df["cum_passed_hrs"]
-    ).clip(lower=0)
-    df["extra_hrs_ratio_done"] = (
-        df["cum_passed_hrs"] / df["plan_total_hrs"].replace(0, np.nan)
-    ).fillna(0).clip(0, 1)
-    df["extra_is_near_graduation"] = (
-        df["extra_hrs_remaining"] <= 33
-    ).astype(int)
-    return df.drop(
-        columns=["prev_cum_gpa", "prev_cum_hrs", "sem_credits", "plan_total_hrs"]
-    )
-
-
-def check_prereqs_met(passed_set, target_course, include_concurrent=False):
-    """Check if all prerequisites for target_course are in passed_set."""
-    reqs = prereq_map.get(target_course, [])
-    if not reqs:
-        return 1
-    for pc, conc in reqs:
-        if pc in passed_set:
+        candidates = votes[C]
+        if not candidates:
             continue
-        if include_concurrent and conc:
+        best_P, best_count = max(candidates.items(), key=lambda kv: kv[1])
+        precedence = best_count / total
+        if precedence < PRED_MIN_PRECEDENCE:
             continue
-        return 0
-    return 1
+        pred_map[C] = best_P
+
+    return pred_map
 
 
-def assemble_for_course(snap_df, target_course, meta_dict):
-    """Assemble the feature matrix for a single target course."""
-    df = snap_df[snap_df["_enrolled_next"].notna()].copy()
-    y = df["_enrolled_next"].apply(lambda s: int(target_course in s))
-    meta = df[["student_id", "snapshot_sem", "sem_sort_key", "next_sem"]].copy()
-    feats = pd.DataFrame(index=df.index)
+def _first_time_takerate(enrolls_df, sem_counts, course, predecessor, target_term):
+    """
+    Like the previous historical-takerate function but counts ONLY
+    first-time takers in the numerator. A first-time taker is a student
+    who has never enrolled in `course` before this offering. This makes
+    the cohort-flow signal disjoint from the retake-demand signal so the
+    two can be summed without double-counting.
 
-    if meta_dict["feature_flags"]["USE_CORE_STUDENT_FEATURES"]:
-        for c in CAT_FEATURES + NUM_FEATURES_STUDENT:
-            feats[c] = df[c].values
-        passed_cols = [f"passed_{c}" for c in all_course_codes]
-        failed_cols = [f"failed_{c}" for c in all_course_codes]
-        feats[passed_cols] = df[passed_cols].values
-        feats[failed_cols] = df[failed_cols].values
+    Returns (avg_first_time_rate, n_observations). None if no usable
+    historical observations of `course` in `target_term`.
+    """
+    past_offerings = sem_counts[
+        (sem_counts["course_code"] == course)
+        & (sem_counts["term"] == target_term)
+    ]["sem_key"].tolist()
 
-    if meta_dict["feature_flags"]["USE_COURSE_TIMESERIES_FEATURES"]:
-        ts_map = course_ts_lookup.get(target_course, {})
-        ts_per_row = [
-            ts_map.get(int(sk), COURSE_TS_DEFAULTS)
-            for sk in df["sem_sort_key"].values
-        ]
-        ts_df = pd.DataFrame(ts_per_row, index=df.index).fillna(0)
-        for c in COURSE_TS_COLS:
-            feats[c] = ts_df[c].values
+    course_enrolls = enrolls_df[enrolls_df["course_code"] == course]
+    pred_enrolls  = enrolls_df[enrolls_df["course_code"] == predecessor]
 
-    if meta_dict["feature_flags"]["USE_COURSE_METADATA_FEATURES"]:
-        meta_ = course_meta_lookup.get(target_course, COURSE_META_DEFAULTS)
-        for c in COURSE_META_COLS:
-            feats[c] = meta_[c]
+    rates = []
+    all_sem_keys = sorted(sem_counts["sem_key"].unique())
+    for off_sk in past_offerings:
+        prev_candidates = [s for s in all_sem_keys if s < off_sk]
+        if not prev_candidates:
+            continue
+        prev_sk = max(prev_candidates)
 
-    if meta_dict["feature_flags"]["USE_V3_EXTRA_FEATURES"]:
-        for c in V3_EXTRA_STUDENT_LEVEL:
-            feats[c] = df[c].values
-        feats["extra_is_in_plan"] = df["plan_key"].apply(
-            lambda pk: int(target_course in plan_course_map.get(pk, set()))
-        ).values
-        passed_col = f"passed_{target_course}"
-        failed_col = f"failed_{target_course}"
-        feats["extra_already_passed"] = (
-            df[passed_col].values if passed_col in df.columns else 0
+        # Ready pool: passed predecessor recently AND never touched target
+        ready = pred_enrolls[(pred_enrolls["sem_key"] == prev_sk)
+                             & (pred_enrolls["passed"])]
+        ready_ids = set(ready["student_id"].astype(str))
+        already = set(
+            course_enrolls[course_enrolls["sem_key"] < off_sk]
+            ["student_id"].astype(str)
         )
-        feats["extra_has_failed_before"] = (
-            df[failed_col].values if failed_col in df.columns else 0
+        ready_pool = ready_ids - already
+        if len(ready_pool) < 5:
+            continue
+
+        # First-time takers = this-offering takers minus prior-touchers
+        takers = set(
+            course_enrolls[course_enrolls["sem_key"] == off_sk]
+            ["student_id"].astype(str)
         )
-        feats["extra_prereqs_satisfied"] = df["_passed_set"].apply(
-            lambda s: check_prereqs_met(s, target_course, False)
-        ).values
-        feats["extra_prereqs_satisfied_with_concurrent"] = df["_passed_set"].apply(
-            lambda s: check_prereqs_met(s, target_course, True)
-        ).values
-        target_cat = course_meta_lookup.get(target_course, {}).get("category_ord", 0)
-        same_cat_courses = set(
-            c for c, m in course_meta_lookup.items()
-            if m.get("category_ord", 0) == target_cat
+        first_time_from_ready = (takers - already) & ready_pool
+        rates.append(len(first_time_from_ready) / len(ready_pool))
+
+    if not rates:
+        return None, 0
+    return float(np.mean(rates)), len(rates)
+
+def _compute_retake_pools(enrolls_df, active_ids, target_term):
+    """
+    For each course, estimate next-term retake demand AND identify the
+    specific students in the current fail pool (for per-student listings).
+
+    Returns {course_code: {"signal": float, "fail_pool": set[str],
+                           "retake_rate": float}}.
+
+    current_fail_pool[c]: active students whose LATEST attempt at c was
+                          a failing grade (i.e. haven't subsequently passed).
+    historical_retake_rate[c, term]: of the fail pool just before each
+                          past offering of c in `target_term`, what
+                          fraction re-enrolled in that offering.
+    signal = len(current_fail_pool) * historical_retake_rate.
+    """
+    pools = {}
+    for cc, ch in enrolls_df.groupby("course_code", sort=False):
+        ch = ch.sort_values(["student_id", "sem_key"])
+        latest_per_student = ch.groupby("student_id").tail(1)
+        failers_latest = set(
+            latest_per_student[~latest_per_student["passed"]]
+            ["student_id"].astype(str)
         )
-        denom = max(len(same_cat_courses), 1)
-        feats["extra_same_category_pass_rate"] = df["_passed_set"].apply(
-            lambda s: len(s & same_cat_courses) / denom
-        ).values
+        current_fail_pool = failers_latest & active_ids
+        if not current_fail_pool:
+            pools[cc] = {"signal": 0.0, "fail_pool": set(), "retake_rate": 0.0}
+            continue
 
-    return feats, y, meta
+        past_offerings_in_term = (
+            ch[ch["term"] == target_term].groupby("sem_key")["student_id"]
+            .apply(set).to_dict()
+        )
+        if not past_offerings_in_term:
+            pools[cc] = {"signal": 0.0, "fail_pool": current_fail_pool, "retake_rate": 0.0}
+            continue
 
-
-def build_X(feats_df, ohe_encoder, scaler=None, fit_scaler=False,
-            cat_features=None, num_features_student=None,
-            numeric_extras=None, extra_flags=None):
-    """Encode and scale features into the final numpy matrix."""
-    cat_features = cat_features or []
-    num_features_student = num_features_student or []
-    numeric_extras = numeric_extras or []
-    extra_flags = extra_flags or []
-
-    if len(feats_df) == 0:
-        feature_names = []
-        if cat_features:
-            feature_names.extend(
-                ohe_encoder.get_feature_names_out(cat_features).tolist()
+        rates = []
+        for off_sk, takers in past_offerings_in_term.items():
+            prior = ch[ch["sem_key"] < off_sk]
+            if len(prior) == 0:
+                continue
+            last_prior = prior.groupby("student_id").tail(1)
+            fail_pool_then = set(
+                last_prior[~last_prior["passed"]]["student_id"].astype(str)
             )
-        feature_names.extend(num_features_student + numeric_extras + extra_flags)
-        return np.empty((0, len(feature_names))), scaler, feature_names
+            if len(fail_pool_then) < 3:
+                continue
+            retook = fail_pool_then & set(map(str, takers))
+            rates.append(len(retook) / len(fail_pool_then))
 
-    parts = []
-    feature_names = []
+        if not rates:
+            pools[cc] = {"signal": 0.0, "fail_pool": current_fail_pool, "retake_rate": 0.0}
+            continue
 
-    if cat_features:
-        cat_arr = ohe_encoder.transform(feats_df[cat_features])
-        parts.append(cat_arr)
-        feature_names.extend(
-            ohe_encoder.get_feature_names_out(cat_features).tolist()
-        )
+        avg_rate = float(np.mean(rates))
+        pools[cc] = {
+            "signal": len(current_fail_pool) * avg_rate,
+            "fail_pool": current_fail_pool,
+            "retake_rate": avg_rate,
+        }
+    return pools
 
-    num_cols_all = num_features_student + numeric_extras
-    if num_cols_all:
-        num_arr = feats_df[num_cols_all].values.astype(float)
-        if scaler is None:
-            scaler = StandardScaler()
-        if fit_scaler:
-            scaler.fit(num_arr)
-        num_arr = scaler.transform(num_arr)
-        parts.append(num_arr)
-        feature_names.extend(num_cols_all)
-
-    if extra_flags:
-        flag_arr = feats_df[extra_flags].values.astype(float)
-        parts.append(flag_arr)
-        feature_names.extend(extra_flags)
-
-    X = (
-        np.concatenate(parts, axis=1) if parts
-        else np.empty((len(feats_df), 0))
-    )
-    return X, scaler, feature_names
-
-
-def split_feature_columns(feats_df, meta_dict):
-    """Partition feature columns into categorical, numeric, and flag groups."""
-    cat_cols = [c for c in CAT_FEATURES if c in feats_df.columns]
-    core_num_cols = [c for c in NUM_FEATURES_STUDENT if c in feats_df.columns]
-
-    ts_cols = (
-        [c for c in COURSE_TS_COLS if c in feats_df.columns]
-        if meta_dict["feature_flags"]["USE_COURSE_TIMESERIES_FEATURES"]
-        else []
-    )
-
-    meta_num_cols = (
-        [c for c in ["credit_hours", "lecture_hours", "lab_hours"]
-         if c in feats_df.columns]
-        if meta_dict["feature_flags"]["USE_COURSE_METADATA_FEATURES"]
-        else []
-    )
-    meta_flag_cols = (
-        [c for c in ["category_ord", "is_compulsory"]
-         if c in feats_df.columns]
-        if meta_dict["feature_flags"]["USE_COURSE_METADATA_FEATURES"]
-        else []
-    )
-
-    v3_num_cols = (
-        [c for c in [
-            "extra_gpa_trend", "extra_avg_credits_per_sem",
-            "extra_hrs_remaining", "extra_hrs_ratio_done",
-            "extra_same_category_pass_rate",
-        ] if c in feats_df.columns]
-        if meta_dict["feature_flags"]["USE_V3_EXTRA_FEATURES"]
-        else []
-    )
-    v3_flag_cols = (
-        [c for c in [
-            "extra_is_near_graduation", "extra_is_in_plan",
-            "extra_already_passed", "extra_has_failed_before",
-            "extra_prereqs_satisfied",
-            "extra_prereqs_satisfied_with_concurrent",
-        ] if c in feats_df.columns]
-        if meta_dict["feature_flags"]["USE_V3_EXTRA_FEATURES"]
-        else []
-    )
-
-    bin_cols = [
-        c for c in feats_df.columns
-        if c.startswith("passed_") or c.startswith("failed_")
-    ]
-
-    numeric_extras = ts_cols + meta_num_cols + v3_num_cols
-    extra_flags = meta_flag_cols + v3_flag_cols + bin_cols
-
-    return cat_cols, core_num_cols, numeric_extras, extra_flags
-
-
-# ── 3. The Main Inference Function ────────────────────────────────────────────
 
 def predict_next_semester(
-    current_enrolls, current_students, artifacts_dir=ARTIFACTS_DIR,
+    enrolls_df, students_df,
     next_sem_label=None, section_cap=None, buffer_pct=None,
+    count_mode="probability",
 ):
-    """
-    Run inference for the next semester.
+    """Returns (student_preds_df, demand_df, sections_df, latest_snap)."""
 
-    Parameters
-    ----------
-    current_enrolls : pd.DataFrame
-        Must contain: student_id, course_code, year, term, semester_label,
-        grade, credit_hours.
-    current_students : pd.DataFrame
-        Must contain: student_id, major, degree_type, admission_year,
-        needs_rem_arabic, needs_rem_english, needs_rem_math.
-        Optional: plan_key (auto-derived from major + degree_type if absent).
-    artifacts_dir : str
-        Path to the artifacts folder containing .pkl files.
-    next_sem_label : str or None
-        Override for the predicted semester label.
-    section_cap : int or None
-        Students per section (default from inference_meta.json).
-    buffer_pct : float or None
-        Buffer percentage for section count (default from inference_meta.json).
+    if section_cap is None:
+        section_cap = 30
+    if buffer_pct is None:
+        buffer_pct = 0.10
 
-    Returns
-    -------
-    (student_predictions_df, demand_df, sections_df, latest_snap)
-    """
-    global prereq_map, plan_course_map, course_ts_lookup
-    global course_meta_lookup, all_course_codes
-
-    with open(os.path.join(artifacts_dir, "inference_meta.json")) as f:
-        meta = json.load(f)
-
-    ohe_               = joblib.load(os.path.join(artifacts_dir, "ohe.pkl"))
-    prereq_map         = joblib.load(os.path.join(artifacts_dir, "prereq_map.pkl"))
-    plan_course_map    = joblib.load(os.path.join(artifacts_dir, "plan_course_map.pkl"))
-    course_ts_lookup   = joblib.load(os.path.join(artifacts_dir, "course_ts_lookup.pkl"))
-    course_meta_lookup = joblib.load(os.path.join(artifacts_dir, "course_meta_lookup.pkl"))
-    all_course_codes   = joblib.load(os.path.join(artifacts_dir, "all_course_codes.pkl"))
-
-    manifest_ = pd.read_csv(
-        os.path.join(artifacts_dir, "model_manifest.csv"),
-        dtype={"course_code": str},
+    # ── Normalize inputs ────────────────────────────────────────────────
+    enrolls_df = enrolls_df.copy()
+    students_df = students_df.copy()
+    enrolls_df["course_code"] = enrolls_df["course_code"].astype(str).str.zfill(10)
+    enrolls_df["sem_key"] = (
+        enrolls_df["year"].astype(int) * 10
+        + enrolls_df["term"].map(TERM_RANK).fillna(1).astype(int)
     )
-    # Rebase relative paths to absolute using artifacts_dir as the root
-    manifest_["path"] = manifest_["path"].apply(
-        lambda p: os.path.join(artifacts_dir, os.path.basename(os.path.dirname(p)), os.path.basename(p))
-    )
+    enrolls_df["passed"] = enrolls_df["grade"].astype(str).isin(PASS_GRADES)
 
-    section_cap = section_cap or meta["section_cap"]
-    buffer_pct = (
-        buffer_pct if buffer_pct is not None
-        else meta["sections_buffer_pct"]
-    )
+    if "status" in students_df.columns:
+        before = len(students_df)
+        students_df = students_df[
+            ~students_df["status"].astype(str).isin(INACTIVE_STATUSES)
+        ].reset_index(drop=True)
+        removed = before - len(students_df)
+        if removed:
+            print(f"[inference-ts] filtered {removed:,} inactive students; "
+                  f"{len(students_df):,} active remain")
 
-    # ── Build LATEST snapshot ──────────────────────────────────────────────
-    enrolls_ = current_enrolls.copy()
-    enrolls_["course_code"] = enrolls_["course_code"].astype(str).str.strip()
-    enrolls_["sem_sort_key"] = (
-        enrolls_["year"].astype(int) * 10
-        + enrolls_["term"].map(meta["term_order"])
-    )
-    enrolls_ = (
-        enrolls_.sort_values(["student_id", "sem_sort_key"])
-        .reset_index(drop=True)
-    )
+    if len(enrolls_df) == 0:
+        empty = pd.DataFrame()
+        return empty, empty, empty, pd.DataFrame()
 
-    latest_snap = build_snapshots(
-        enrolls_, current_students, all_course_codes, horizon=1
-    )
-    latest_snap = (
-        latest_snap.sort_values(["student_id", "sem_sort_key"])
-        .groupby("student_id").tail(1)
-        .reset_index(drop=True)
-    )
-    latest_snap["_enrolled_next"] = [set() for _ in range(len(latest_snap))]
-
-    if meta["feature_flags"]["USE_V3_EXTRA_FEATURES"]:
-        latest_snap = add_v3_student_level(latest_snap)
-        if "_passed_set" not in latest_snap.columns:
-            passed_cols_full = [f"passed_{c}" for c in all_course_codes]
-            arr = latest_snap[passed_cols_full].values
-            latest_snap["_passed_set"] = [
-                set(all_course_codes[j] for j in np.where(row == 1)[0])
-                for row in arr
-            ]
-
-    # ── Infer next semester label ──────────────────────────────────────────
+    # ── Determine target semester ───────────────────────────────────────
+    latest_sem_key = enrolls_df["sem_key"].max()
+    latest_row = enrolls_df[enrolls_df["sem_key"] == latest_sem_key].iloc[0]
+    latest_year = int(latest_row["year"])
+    latest_term = str(latest_row["term"])
     if next_sem_label is None:
-        latest_key = latest_snap["sem_sort_key"].max()
-        y = int(latest_key // 10)
-        t = int(latest_key % 10)
-        if t == 3:
-            next_sem_label = f"{y + 1}_Fall"
-        elif t == 1:
-            next_sem_label = f"{y}_Spring"
-        else:
-            next_sem_label = f"{y}_Summer"
+        next_sem_label = _next_semester_label(latest_year, latest_term)
+    next_term = next_sem_label.split("_")[-1]
 
-    # ── Per-student per-course predictions ─────────────────────────────────
-    pred_rows = []
-    for _, row in manifest_.iterrows():
-        course_code = row["course_code"]
-        bundle = joblib.load(row["path"])
-        model = bundle["model"]
-        scaler = bundle["scaler"]
+    # ── Per-course historical time series ───────────────────────────────
+    sem_counts = (
+        enrolls_df.groupby(
+            ["course_code", "semester_label", "year", "term", "sem_key"]
+        )["student_id"].nunique().reset_index(name="n_students")
+    )
 
-        feats_all, _, meta_all = assemble_for_course(
-            latest_snap, course_code, meta
-        )
-        if len(feats_all) == 0:
-            continue
+    # ── Infer predecessors from the data ────────────────────────────────
+    pred_map = _build_predecessor_map(enrolls_df)
+    print(f"[inference-ts] inferred predecessors for {len(pred_map)}/"
+          f"{sem_counts['course_code'].nunique()} courses")
 
-        cat_c, core_n, num_ext, ext_flags = split_feature_columns(
-            feats_all, meta
-        )
-        X, _, _ = build_X(
-            feats_all, ohe_encoder=ohe_, scaler=scaler, fit_scaler=False,
-            cat_features=cat_c, num_features_student=core_n,
-            numeric_extras=num_ext, extra_flags=ext_flags,
-        )
+    # ── Active students' currently-passed sets (for ready-pool counting) ─
+    active_ids = set(students_df["student_id"].astype(str))
+    active_enrolls = enrolls_df[
+        enrolls_df["student_id"].astype(str).isin(active_ids)
+    ]
+    # passed_in_latest[P] = set of active student_ids who passed P in latest sem
+    passed_in_latest = (
+        active_enrolls[
+            (active_enrolls["sem_key"] == latest_sem_key)
+            & (active_enrolls["passed"])
+        ].groupby("course_code")["student_id"].apply(set).to_dict()
+    )
+    # already_took[C] = set of active student_ids who have ever taken C
+    already_took = (
+        active_enrolls.groupby("course_code")["student_id"].apply(set).to_dict()
+    )
 
-        probs = (
-            model.predict_proba(X)[:, 1]
-            if hasattr(model, "predict_proba")
-            else model.predict(X).astype(float)
-        )
+    # ── Per-course retake demand and fail pools ─────────────────────────
+    # current_fail_pool * historical retake rate in target term.
+    # Disjoint from the cohort-flow signal (which counts first-timers only),
+    # so the two are summed cleanly. We also keep the fail_pool sets so we
+    # can list specific predicted-retake students per course.
+    active_ids_set = set(students_df["student_id"].astype(str))
+    retake_pools = _compute_retake_pools(enrolls_df, active_ids_set, next_term)
+    print(f"[inference-ts] retake demand computed for "
+          f"{sum(1 for v in retake_pools.values() if v['signal'] > 0)} courses")
 
-        for (_, mrow), p in zip(meta_all.iterrows(), probs):
-            pred_rows.append({
-                "student_id":  mrow["student_id"],
-                "course_code": course_code,
-                "next_sem":    next_sem_label,
-                "prob_enroll": float(p),
-                "pred_enroll": int(p >= meta["enroll_threshold"]),
+    # ── Forecast each course and track per-student candidates ───────────
+    forecasts = []
+    student_preds_rows = []
+    for cc, ch in sem_counts.groupby("course_code"):
+        ts_base = _ts_forecast(ch, next_term)
+        pred = pred_map.get(cc)
+        cohort_first = 0.0
+        ready_pool = set()
+        first_time_rate = 0.0
+
+        if pred is not None:
+            ft_rate, n_obs = _first_time_takerate(
+                enrolls_df, sem_counts, cc, pred, next_term
+            )
+            if ft_rate is not None and n_obs >= 1:
+                ready_pool = (
+                    passed_in_latest.get(pred, set())
+                    - already_took.get(cc, set())
+                )
+                first_time_rate = ft_rate
+                cohort_first = len(ready_pool) * ft_rate
+
+        retake_info = retake_pools.get(cc, {})
+        retake_signal_val = retake_info.get("signal", 0.0)
+        fail_pool = retake_info.get("fail_pool", set())
+        retake_rate_val = retake_info.get("retake_rate", 0.0)
+
+        # Combined cohort = first-time-from-predecessor + retake demand.
+        # The two summands are disjoint by construction:
+        #   - cohort_first counts students who passed P and never took C
+        #   - retake counts students whose latest C grade was a fail
+        cohort_total = cohort_first + retake_signal_val
+
+        # max(ts, cohort): time-series captures stable seasonal patterns;
+        # cohort captures "this cohort is unusually big/small" plus retake
+        # demand. Whichever signal fires more strongly wins. Both are
+        # bounded by real historical patterns so neither runs away.
+        forecast = max(ts_base, cohort_total)
+
+        forecasts.append({
+            "course_code":     cc,
+            "predicted_count": max(0, int(round(forecast))),
+        })
+
+        # Record per-student candidates for this course. Each row has the
+        # student_id, the course, the reason they're a candidate, and a
+        # rough confidence score (the historical conversion rate for that
+        # signal). The API view enriches these with student metadata.
+        for sid in ready_pool:
+            student_preds_rows.append({
+                "student_id":      str(sid),
+                "course_code":     cc,
+                "reason":          "passed_predecessor",
+                "confidence":      round(float(first_time_rate), 3),
+                "next_sem":        next_sem_label,
+            })
+        for sid in fail_pool:
+            student_preds_rows.append({
+                "student_id":      str(sid),
+                "course_code":     cc,
+                "reason":          "retake_candidate",
+                "confidence":      round(float(retake_rate_val), 3),
+                "next_sem":        next_sem_label,
             })
 
-    student_predictions_df = pd.DataFrame(pred_rows)
-    if len(student_predictions_df) == 0:
-        empty = pd.DataFrame()
-        return empty, empty, empty, latest_snap
+    demand_df = pd.DataFrame(forecasts)
 
-    # ── Aggregate to course-level demand ───────────────────────────────────
-    demand_df = (
-        student_predictions_df
-        .groupby(["next_sem", "course_code"])
-        .agg(
-            predicted_count=("prob_enroll", "sum"),
-            predicted_binary=("pred_enroll", "sum"),
-        )
-        .reset_index()
-    )
-    demand_df["predicted_count"] = (
-        demand_df["predicted_count"].round().astype(int)
-    )
-    demand_df["course_code"] = demand_df["course_code"].astype(str)
+    # ── Sections ────────────────────────────────────────────────────────
+    def _sections(n):
+        return math.ceil((n * (1.0 + buffer_pct)) / max(section_cap, 1))
 
-    # ── Section recommendations ────────────────────────────────────────────
-    demand_df["predicted_sections"] = np.ceil(
-        demand_df["predicted_count"] * (1 + buffer_pct) / section_cap
-    ).astype(int)
-
-    sections_df = demand_df[[
-        "course_code", "predicted_count", "predicted_sections",
-    ]].copy()
-
-    return student_predictions_df, demand_df, sections_df, latest_snap
-
-
-# ── 4. Explainable AI (SHAP) Helpers ──────────────────────────────────────────
-
-def explain_live_student(
-    student_id, course_code, latest_snap,
-    artifacts_dir=ARTIFACTS_DIR, top_k=10,
-):
-    """
-    SHAP explanation for a single student-course prediction.
-
-    Returns a DataFrame with columns [feature, value, contribution],
-    sorted by absolute contribution descending, or None if no explainer.
-    """
-    import shap  # noqa: F811 — lazy import to avoid loading on server start
-
-    shap_path = os.path.join(
-        artifacts_dir, "shap_explainers", f"{course_code}.pkl"
-    )
-    if not os.path.exists(shap_path):
-        return None
-
-    with open(os.path.join(artifacts_dir, "inference_meta.json")) as f:
-        meta = json.load(f)
-
-    explainer = joblib.load(shap_path)
-    ohe_ = joblib.load(os.path.join(artifacts_dir, "ohe.pkl"))
-    manifest = pd.read_csv(
-        os.path.join(artifacts_dir, "model_manifest.csv"),
-        dtype={"course_code": str},
+    sections_df = demand_df.copy()
+    sections_df["predicted_sections"] = (
+        sections_df["predicted_count"].apply(_sections)
     )
 
-    raw_path = manifest.loc[
-        manifest["course_code"] == str(course_code), "path"
-    ].values[0]
-    bundle_path = os.path.join(
-        artifacts_dir,
-        os.path.basename(os.path.dirname(raw_path)),
-        os.path.basename(raw_path),
-    )
-    bundle = joblib.load(bundle_path)
+    student_preds_df = pd.DataFrame(student_preds_rows) if student_preds_rows \
+                       else pd.DataFrame(columns=["student_id", "course_code",
+                                                  "reason", "confidence",
+                                                  "next_sem"])
+    if "next_sem" not in student_preds_df.columns or len(student_preds_df) == 0:
+        # Edge case: no identified candidates anywhere. Keep the next_sem
+        # field populated so api_views can still extract the predicted term.
+        student_preds_df = pd.DataFrame({"next_sem": [next_sem_label]})
 
-    row = latest_snap[latest_snap["student_id"] == student_id]
-    if len(row) == 0:
-        return None
-
-    feats, _, _ = assemble_for_course(row, str(course_code), meta)
-    cat_c, core_n, num_ext, ext_flags = split_feature_columns(feats, meta)
-    X, _, fn = build_X(
-        feats, ohe_encoder=ohe_, scaler=bundle["scaler"], fit_scaler=False,
-        cat_features=cat_c, num_features_student=core_n,
-        numeric_extras=num_ext, extra_flags=ext_flags,
-    )
-
-    shap_values = explainer.shap_values(X)
-    if isinstance(shap_values, list):
-        shap_values = shap_values[1]
-    elif hasattr(shap_values, "shape") and len(shap_values.shape) == 3:
-        shap_values = shap_values[:, :, 1]
-
-    out = pd.DataFrame({
-        "feature":      fn,
-        "value":        np.array(X[0]).flatten(),
-        "contribution": np.array(shap_values[0]).flatten(),
-    })
-    out["abs_contribution"] = out["contribution"].abs()
-
-    return (
-        out.sort_values("abs_contribution", ascending=False)
-        .head(top_k)[["feature", "value", "contribution"]]
-    )
-
-
-def explain_live_course_demand(
-    course_code, latest_snap, student_predictions_df,
-    artifacts_dir=ARTIFACTS_DIR, top_k=10,
-):
-    """
-    Aggregate SHAP explanation: which features drive demand for a course.
-
-    Returns a DataFrame with [feature, mean_contribution,
-    mean_abs_contribution], or None if no explainer / no predicted students.
-    """
-    import shap  # noqa: F811
-
-    shap_path = os.path.join(
-        artifacts_dir, "shap_explainers", f"{course_code}.pkl"
-    )
-    if not os.path.exists(shap_path):
-        return None
-
-    enrolled_students = student_predictions_df[
-        (student_predictions_df["course_code"] == str(course_code))
-        & (student_predictions_df["pred_enroll"] == 1)
-    ]["student_id"].values
-
-    if len(enrolled_students) == 0:
-        return None
-
-    course_snap = latest_snap[
-        latest_snap["student_id"].isin(enrolled_students)
-    ]
-
-    with open(os.path.join(artifacts_dir, "inference_meta.json")) as f:
-        meta = json.load(f)
-
-    explainer = joblib.load(shap_path)
-    ohe_ = joblib.load(os.path.join(artifacts_dir, "ohe.pkl"))
-    manifest = pd.read_csv(
-        os.path.join(artifacts_dir, "model_manifest.csv"),
-        dtype={"course_code": str},
-    )
-
-    raw_path = manifest.loc[
-        manifest["course_code"] == str(course_code), "path"
-    ].values[0]
-    bundle_path = os.path.join(
-        artifacts_dir,
-        os.path.basename(os.path.dirname(raw_path)),
-        os.path.basename(raw_path),
-    )
-    bundle = joblib.load(bundle_path)
-
-    feats_all, _, _ = assemble_for_course(
-        course_snap, str(course_code), meta
-    )
-    cat_c, core_n, num_ext, ext_flags = split_feature_columns(feats_all, meta)
-    X, _, fn = build_X(
-        feats_all, ohe_encoder=ohe_, scaler=bundle["scaler"], fit_scaler=False,
-        cat_features=cat_c, num_features_student=core_n,
-        numeric_extras=num_ext, extra_flags=ext_flags,
-    )
-
-    shap_values = explainer.shap_values(X)
-    if isinstance(shap_values, list):
-        shap_values = shap_values[1]
-    elif hasattr(shap_values, "shape") and len(shap_values.shape) == 3:
-        shap_values = shap_values[:, :, 1]
-
-    agg_df = pd.DataFrame({
-        "feature":              fn,
-        "mean_contribution":     np.mean(shap_values, axis=0),
-        "mean_abs_contribution": np.mean(np.abs(shap_values), axis=0),
-    })
-
-    return (
-        agg_df.sort_values("mean_abs_contribution", ascending=False)
-        .head(top_k)[["feature", "mean_contribution", "mean_abs_contribution"]]
-    )
+    latest_snap = pd.DataFrame()
+    return student_preds_df, demand_df, sections_df, latest_snap
