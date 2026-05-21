@@ -10,7 +10,9 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const search = ref("");
-const reasonFilter = ref<"all" | "passed_predecessor" | "retake_candidate">("all");
+const reasonFilter = ref<
+  "all" | "passed_predecessor" | "retake_candidate" | "plan_match"
+>("all");
 
 watch(
   () => props.isOpen,
@@ -58,6 +60,14 @@ const retakeCount = computed(() =>
     : 0
 );
 
+const planMatchCount = computed(() =>
+  props.course
+    ? props.course.predicted_students.filter(
+        (s) => s.reason === "plan_match"
+      ).length
+    : 0
+);
+
 const remainderCount = computed(() => {
   if (!props.course) return 0;
   return Math.max(
@@ -69,6 +79,7 @@ const remainderCount = computed(() => {
 function reasonLabel(reason: string) {
   if (reason === "passed_predecessor") return "Prereq just passed";
   if (reason === "retake_candidate") return "Likely retake";
+  if (reason === "plan_match") return "Plan + year match";
   return reason;
 }
 
@@ -77,6 +88,8 @@ function reasonClass(reason: string) {
     return "bg-blue-50 text-blue-700 border-blue-200";
   if (reason === "retake_candidate")
     return "bg-amber-50 text-amber-700 border-amber-200";
+  if (reason === "plan_match")
+    return "bg-slate-50 text-slate-700 border-slate-200";
   return "bg-slate-50 text-slate-700 border-slate-200";
 }
 
@@ -179,6 +192,9 @@ function exportCSV() {
           </option>
           <option value="retake_candidate">
             Likely retake ({{ retakeCount }})
+          </option>
+          <option value="plan_match">
+            Plan + year match ({{ planMatchCount }})
           </option>
         </select>
         <button

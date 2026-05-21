@@ -19,6 +19,7 @@ export type CourseStatus = 'optimal' | 'warning' | 'critical'
 export type PredictedStudentReason =
   | 'passed_predecessor'
   | 'retake_candidate'
+  | 'plan_match'
 
 /** A single named student the model expects to enrol in a given course. */
 export interface PredictedStudent {

@@ -207,6 +207,104 @@ def _first_time_takerate(enrolls_df, sem_counts, course, predecessor, target_ter
         return None, 0
     return float(np.mean(rates)), len(rates)
 
+def _compute_plan_eligibility_pools(
+    enrolls_df, students_df, active_ids, target_term, already_took
+):
+    """
+    For each course, identify ALL active students whose (plan_key,
+    current_year) combination historically takes this course in the
+    target term, and who haven't taken it yet themselves.
+
+    This is the broadest of the three identification signals — it
+    catches the year-1 cohort that flows into fundamental courses
+    (Programming, Functional Math, STEM Lab I, etc.) where there is no
+    explicit predecessor course and the time-series component drives
+    the forecast. Without this signal those courses appear with very
+    short identified-student lists even though the aggregate
+    prediction is correct.
+
+    Confidence per candidate is the historical fraction of (plan_key,
+    current_year) cohort members who took the course in any past
+    target-term offering. We use the CURRENT student population as a
+    proxy for the historical cohort distribution — a known
+    approximation that's fine in practice for short time horizons.
+
+    Returns {course_code: {student_id: confidence}}.
+    """
+    PLAN_MIN_RATE = 0.10   # only include (plan, year) pairs where >=10%
+                           # of members historically take the course
+    YEAR_TOLERANCE = 1     # +/- this many years from typical year
+
+    # Build student -> (plan_key, current_year) lookup, active only.
+    student_pty = {}  # sid -> (plan_key, current_year)
+    for _, s in students_df.iterrows():
+        sid = str(s["student_id"])
+        if sid not in active_ids:
+            continue
+        try:
+            cum_hrs = int(s.get("total_passed_hrs", 0) or 0)
+        except (TypeError, ValueError):
+            cum_hrs = 0
+        current_year = max(1, min(4, cum_hrs // 33 + 1))
+        plan_key = str(s.get("plan_key", "") or "").strip()
+        if plan_key:
+            student_pty[sid] = (plan_key, current_year)
+
+    # Group current students by (plan, year) for fast lookup.
+    members_by_pty = {}
+    for sid, pty in student_pty.items():
+        members_by_pty.setdefault(pty, set()).add(sid)
+
+    pools = {}
+
+    for cc, ch in enrolls_df.groupby("course_code"):
+        # All-time takers (regardless of term) — used for typical-year inference.
+        term_takers = set(
+            ch[ch["term"] == target_term]["student_id"].astype(str).unique()
+        )
+        if len(term_takers) == 0:
+            pools[cc] = {}
+            continue
+
+        # Course's typical academic year = most common current_year among
+        # its target-term takers (using current student state as proxy).
+        years_of_takers = [
+            student_pty[s][1] for s in term_takers if s in student_pty
+        ]
+        if not years_of_takers:
+            pools[cc] = {}
+            continue
+        # Use median rather than mode to handle bimodal courses sensibly.
+        typical_year = int(np.median(years_of_takers))
+
+        # For each (plan, year) cohort, compute the historical take rate
+        # for this course in target_term, then add eligible candidates.
+        candidates = {}
+        for (plan, yr), members in members_by_pty.items():
+            if abs(yr - typical_year) > YEAR_TOLERANCE:
+                continue
+            took_in_term = members & term_takers
+            if not members:
+                continue
+            take_rate = len(took_in_term) / len(members)
+            if take_rate < PLAN_MIN_RATE:
+                continue
+            # Eligible candidates: plan-and-year members who haven't taken
+            # the course yet. We exclude past takers so the list reflects
+            # who would be taking it for the first time.
+            eligible = members - already_took.get(cc, set())
+            for sid in eligible:
+                # If a student qualifies via multiple cohort definitions
+                # (shouldn't happen since each student has one plan/year)
+                # take the highest rate.
+                if take_rate > candidates.get(sid, 0.0):
+                    candidates[sid] = take_rate
+
+        pools[cc] = candidates
+
+    return pools
+
+
 def _compute_retake_pools(enrolls_df, active_ids, target_term):
     """
     For each course, estimate next-term retake demand AND identify the
@@ -268,6 +366,92 @@ def _compute_retake_pools(enrolls_df, active_ids, target_term):
             "retake_rate": avg_rate,
         }
     return pools
+
+
+def _compute_plan_affinity(enrolls_df, students_df, target_term):
+    """
+    For each course, compute the historical per-semester take rate within
+    each student plan (e.g. CS_Bachelor, Cyber_Technical).
+
+    Returns {course_code: {plan_key: take_rate}}.
+
+    take_rate[C, plan] = average, across past offerings of C in target_term, of
+        (students of `plan` who took C that semester)
+        / (students of `plan` active by that semester)
+
+    "Active by semester sk" is approximated as: had any enrolment row at or
+    before sk. This may slightly understate denominators for the earliest
+    semesters but is consistent across courses.
+    """
+    # Build student → plan map; fall back to major+degree_type if plan_key
+    # column isn't present (older CSV format).
+    if "plan_key" in students_df.columns:
+        student_plans = dict(
+            zip(
+                students_df["student_id"].astype(str),
+                students_df["plan_key"].astype(str),
+            )
+        )
+    elif "major" in students_df.columns:
+        deg = (
+            students_df["degree_type"].astype(str)
+            if "degree_type" in students_df.columns
+            else pd.Series(["Bachelor"] * len(students_df))
+        )
+        student_plans = dict(
+            zip(
+                students_df["student_id"].astype(str),
+                (students_df["major"].astype(str) + "_" + deg),
+            )
+        )
+    else:
+        return {}, {}
+
+    # Per-student earliest sem_key (proxy for "active since"). String compare
+    # works because our sem_key is a sortable int.
+    first_sem = (
+        enrolls_df.groupby(enrolls_df["student_id"].astype(str))["sem_key"]
+        .min().to_dict()
+    )
+
+    # All past offerings in the target term
+    target_off = enrolls_df[enrolls_df["term"] == target_term]
+    if len(target_off) == 0:
+        return {}, student_plans
+
+    # For each (course, sem_key), count takers per plan
+    affinity_accum: dict = {}      # {course: {plan: [rate, rate, ...]}}
+    for (cc, sk), grp in target_off.groupby(["course_code", "sem_key"]):
+        cc = str(cc)
+        # Active denominator at this sem_key
+        active_by_plan: dict = {}
+        for sid, plan in student_plans.items():
+            fs = first_sem.get(sid)
+            if fs is not None and fs <= sk:
+                active_by_plan[plan] = active_by_plan.get(plan, 0) + 1
+        if not active_by_plan:
+            continue
+        # Numerator: takers in this offering, grouped by plan
+        takers = set(grp["student_id"].astype(str).unique())
+        takers_by_plan: dict = {}
+        for sid in takers:
+            plan = student_plans.get(sid)
+            if plan:
+                takers_by_plan[plan] = takers_by_plan.get(plan, 0) + 1
+        for plan, n_takers in takers_by_plan.items():
+            denom = active_by_plan.get(plan, 0)
+            if denom > 0:
+                rate = n_takers / denom
+                affinity_accum.setdefault(cc, {}).setdefault(plan, []).append(rate)
+
+    # Average across past offerings
+    affinity: dict = {}
+    for cc, plan_rates in affinity_accum.items():
+        affinity[cc] = {}
+        for plan, rates in plan_rates.items():
+            affinity[cc][plan] = float(np.mean(rates))
+
+    return affinity, student_plans
 
 
 def predict_next_semester(
@@ -354,6 +538,21 @@ def predict_next_semester(
     print(f"[inference-ts] retake demand computed for "
           f"{sum(1 for v in retake_pools.values() if v['signal'] > 0)} courses")
 
+    # ── Per-course plan eligibility pools ───────────────────────────────
+    # Broad third signal: identify all active students whose
+    # (plan_key, current_year) historically takes the course in target_term
+    # and who haven't taken it yet. Catches year-1 cohorts flowing into
+    # fundamental courses (Programming, Functional Math, STEM Lab I, etc.)
+    # where there is no explicit predecessor course and the time-series
+    # component drives the forecast.
+    plan_pools = _compute_plan_eligibility_pools(
+        enrolls_df, students_df, active_ids_set, next_term, already_took
+    )
+    n_courses_with_plan = sum(1 for v in plan_pools.values() if v)
+    n_plan_rows = sum(len(v) for v in plan_pools.values())
+    print(f"[inference-ts] plan eligibility computed for "
+          f"{n_courses_with_plan} courses, {n_plan_rows:,} candidate rows")
+
     # ── Forecast each course and track per-student candidates ───────────
     forecasts = []
     student_preds_rows = []
@@ -398,24 +597,53 @@ def predict_next_semester(
             "predicted_count": max(0, int(round(forecast))),
         })
 
-        # Record per-student candidates for this course. Each row has the
-        # student_id, the course, the reason they're a candidate, and a
-        # rough confidence score (the historical conversion rate for that
-        # signal). The API view enriches these with student metadata.
+        # Record per-student candidates for this course. Three signals
+        # with strict priority for deduplication:
+        #   1. passed_predecessor (strongest direct signal — student just
+        #      completed the prerequisite course)
+        #   2. retake_candidate (clear historical signal — last attempt
+        #      was a failing grade)
+        #   3. plan_match (broadest signal — student's plan_key + year
+        #      historically take this course)
+        # A student appearing in multiple pools keeps only the highest-
+        # priority row, so the modal never shows them twice for the same
+        # course.
+        seen_for_course = set()
+
         for sid in ready_pool:
+            sid_s = str(sid)
+            if sid_s in seen_for_course:
+                continue
+            seen_for_course.add(sid_s)
             student_preds_rows.append({
-                "student_id":      str(sid),
+                "student_id":      sid_s,
                 "course_code":     cc,
                 "reason":          "passed_predecessor",
                 "confidence":      round(float(first_time_rate), 3),
                 "next_sem":        next_sem_label,
             })
         for sid in fail_pool:
+            sid_s = str(sid)
+            if sid_s in seen_for_course:
+                continue
+            seen_for_course.add(sid_s)
             student_preds_rows.append({
-                "student_id":      str(sid),
+                "student_id":      sid_s,
                 "course_code":     cc,
                 "reason":          "retake_candidate",
                 "confidence":      round(float(retake_rate_val), 3),
+                "next_sem":        next_sem_label,
+            })
+        for sid, rate in plan_pools.get(cc, {}).items():
+            sid_s = str(sid)
+            if sid_s in seen_for_course:
+                continue
+            seen_for_course.add(sid_s)
+            student_preds_rows.append({
+                "student_id":      sid_s,
+                "course_code":     cc,
+                "reason":          "plan_match",
+                "confidence":      round(float(rate), 3),
                 "next_sem":        next_sem_label,
             })
 
