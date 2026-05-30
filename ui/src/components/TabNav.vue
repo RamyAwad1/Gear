@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Tab navigation strip. All five tabs are now wired up to real views.
+ * Tab navigation strip. All five tabs are wired up to real views.
  * Disabled state remains in the prop shape so individual tabs can be
  * temporarily turned off for maintenance without removing the entry.
  */
@@ -19,7 +19,6 @@ const tabs: TabDef[] = [
   { key: 'data-management', label: 'Data Management', enabled: true },
   { key: 'flagged-students', label: 'Flagged Students', enabled: true },
   { key: 'elective-requests', label: 'Elective Requests', enabled: true },
-  { key: 'substitute-requests', label: 'Substitute Requests', enabled: true},
 ]
 
 defineProps<{ modelValue: TabKey }>()

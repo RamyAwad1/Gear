@@ -15,7 +15,6 @@ import DataManagement from '@/views/DataManagement.vue'
 import Predictions from '@/views/Predictions.vue'
 import FlaggedStudents from '@/views/FlaggedStudents.vue'
 import ElectiveRequests from '@/views/ElectiveRequests.vue'
-import SubstituteRequests from "@/views/SubstituteRequests.vue";
 import type { TabKey } from '@/types'
 
 const activeTab = ref<TabKey>('dashboard')
@@ -42,7 +41,6 @@ const activeTab = ref<TabKey>('dashboard')
       />
       <FlaggedStudents v-else-if="activeTab === 'flagged-students'" />
       <ElectiveRequests v-else-if="activeTab === 'elective-requests'" />
-      <SubstituteRequests v-else-if="activeTab === 'substitute-requests'" />
     </main>
   </div>
 </template>

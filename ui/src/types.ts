@@ -11,7 +11,6 @@ export type TabKey =
   | 'data-management'
   | 'flagged-students'
   | 'elective-requests'
-  | 'substitute-requests'
 
 export type CourseStatus = 'optimal' | 'warning' | 'critical'
 
@@ -117,45 +116,4 @@ export interface ElectiveRequest {
   request_count: number
   status: ElectiveRequestStatus
   last_requested_at: string
-}
-
-// ─── Substitute Requests ─────────────────────────────────────────────────────
-
-export type SubstituteRequestStatus = 'pending' | 'approved' | 'rejected'
-
-/** A request from a student to substitute a required graduation course
- *  with a different course. Backed by Django's SubstituteRequest model. */
-export interface SubstituteRequest {
-  id: number
-  student_id: string
-  /** The course the student needs to graduate */
-  original_course_code: string
-  original_course_title: string
-  /** The course they want to take in its place */
-  substitute_course_code: string
-  substitute_course_title: string
-  reason: string
-  status: SubstituteRequestStatus
-  reviewer_notes: string
-  /** username of the reviewer, null if not yet reviewed */
-  reviewer: string | null
-  created_at: string
-  updated_at: string
-  reviewed_at: string | null
-}
-
-/** Payload sent when a student creates a new substitute request. */
-export interface SubstituteRequestCreate {
-  student_id: string
-  original_course_code: string
-  original_course_title?: string
-  substitute_course_code: string
-  substitute_course_title?: string
-  reason: string
-}
-
-/** Payload sent when a reviewer updates a request. */
-export interface SubstituteRequestUpdate {
-  status?: SubstituteRequestStatus
-  reviewer_notes?: string
 }
