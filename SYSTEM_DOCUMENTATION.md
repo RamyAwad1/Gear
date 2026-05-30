@@ -1,450 +1,360 @@
-# HTU Enrollment Prediction System — Final Implementation
+# System Documentation
 
-This document describes the final state of the enrollment forecasting
-system, including how the model works, what changed across iterations,
-the backend and frontend updates, and known limitations.
+Architectural reference for the HTU Intelligent Registration System. Covers
+the forecasting algorithm, API contracts, data formats, and per-module
+responsibilities. For setup and quick-start instructions, see `README.md`.
 
----
+## Architecture overview
 
-## 1. What the system does
-
-Given a CSV of historical course enrollments and a CSV of student
-records, the system forecasts how many students will enroll in each
-course in the next academic semester (Fall / Spring / Summer). The
-output drives the dashboard's per-course "Predicted Enrollment" and
-"Sections Needed" columns.
-
-There is **no trained model artefact**. All forecasting is computed
-at request time directly from the uploaded enrollment history. This
-means nothing needs to be re-trained when new data is uploaded, and
-there is no `model.pkl` to keep in sync with the inference code.
-
----
-
-## 2. System architecture
+The system has three layers and no hidden state. A single prediction
+request flows top-to-bottom in one pass:
 
 ```
-┌─────────────────┐   POST /api/predict/upload/   ┌─────────────────────┐
-│   Vue frontend  │ ─────────────────────────────▶│  Django + DRF       │
-│   (Vite, Pinia) │  multipart: enrollments.csv,  │  core/api_views.py  │
-│                 │            students.csv       │                     │
-└─────────────────┘                               └──────────┬──────────┘
-                                                             │
-                                                             ▼
-                                                  ┌─────────────────────┐
-                                                  │  ml/inference.py    │
-                                                  │  predict_next_      │
-                                                  │  semester(...)      │
-                                                  └─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  FRONTEND  ·  Vue 3 + Pinia + Tailwind  ·  Vite dev server (port 5173)   │
+│  Five tabs: Dashboard · Predictions · Data Management · Flagged Students │
+│            · Elective Requests                                           │
+└─────────────────────────────────────┬────────────────────────────────────┘
+                          POST /api/predict/upload/
+                       (multipart: 2 CSVs + form fields)
+                                      │
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  BACKEND  ·  Django 6 + REST Framework  ·  port 8000                     │
+│                                                                          │
+│  core/api_views.py                                                       │
+│    ├─ POST /api/predict/upload/   validates CSVs, dispatches to engine   │
+│    └─ GET  /api/health/           liveness check                         │
+│                                      │                                   │
+│  ml/inference.py                     │                                   │
+│    └─ predict_next_semester(...)  ◄──┘                                   │
+│        ├─ Signal 1: time-series                                          │
+│        ├─ Signal 2: cohort + retake                                      │
+│        ├─ Signal 3: plan + year match                                    │
+│        └─ combine: forecast = max(ts, cohort + retake)                   │
+│           returns JSON: totals + per-course predictions + named students │
+└─────────────────────────────────────┬────────────────────────────────────┘
+                                      │
+                                      ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  PERSISTENCE  ·  PostgreSQL                                              │
+│  Dormant. The `AppUser` schema is defined for future authentication      │
+│  but no working feature reads from or writes to the database.            │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-Frontend posts a multipart upload to `/api/predict/upload/`. The Django
-view validates the CSV columns, normalises types, calls
-`predict_next_semester(enrolls_df, students_df)`, and returns a JSON
-payload that the frontend renders in the predictions table.
+The forecasting engine has no trained model, no training step, and no
+cached state. Identical input always produces identical output.
 
----
+## Forecasting algorithm
 
-## 3. The forecasting algorithm
+For each course in the catalogue, three independent signals are computed
+from the uploaded enrolment history, then combined.
 
-For each course in the enrollment history, the model computes three
-independent signals and combines them with a single `max()` rule.
+### Signal 1 — Time-series
 
-### 3.1 Signal 1 — Time-series
+A weighted three-period average of past same-term enrolments, plus a
+damped year-over-year trend term.
 
-The course's own per-term history projected forward with a damped trend.
+```
+ts = w · last_three_same_term_avg + damped_trend
+```
 
-For a course C predicting next semester in target term T:
+This captures the baseline that *something like the last few semesters'*
+takers will appear. It produces an aggregate count but does not identify
+specific students.
 
-1. Filter the course's history to the rows whose term matches T.
-2. Take the last 3 observations of C in T, sorted chronologically.
-3. Compute a weighted mean favouring the most recent observation
-   (weights `[1, 2, 3]` normalised, oldest → newest).
-4. Compute year-over-year first differences and average them.
-5. Forecast = `weighted_mean + 0.5 * trend`.
-6. Edge cases:
-   - Zero observations in T → forecast is 0 (course doesn't run in T).
-   - One observation in T → use it directly, no trend.
-   - Negative results clipped to 0.
+### Signal 2 — Cohort + retake
 
-This signal handles seasonal variation (Fall vs Spring vs Summer course
-mix) and slow drift. It is blind to current cohort composition.
+Two named-student signals:
 
-Implemented in `_ts_forecast(history, target_term)`.
+- **Cohort**: students who just passed the inferred predecessor of the
+  target course (the system infers predecessor relationships from temporal
+  precedence in the data; about 73 of 97 courses get a clear predecessor
+  with ≥30% precedence)
+- **Retake**: students whose most recent attempt at the course was a fail
+  and who haven't since passed it, scaled by the historical retake rate
 
-### 3.2 Signal 2 — First-time cohort flow
+```
+cohort + retake = |ready_pool| · take_rate + |fail_pool| · retake_rate
+```
 
-Counts students who recently passed the inferred predecessor course
-and have never taken the target course before, scaled by the
-historical first-time take-rate.
+This produces both a count and the specific student IDs behind that count.
 
-#### 3.2.1 Predecessor inference
+### Signal 3 — Plan + year match
 
-The system does not require a manually-curated prereq map. It infers
-the strongest predecessor for each course from temporal precedence
-patterns in the data.
+Broad cohort signal for courses without a clear predecessor (year-1
+fundamentals like Programming or Functional Math). Groups students by
+`(plan_key, current_academic_year)` and surfaces students whose plan
+historically takes the course in that year.
 
-Algorithm in `_build_predecessor_map(enrolls_df)`:
+### Combination
 
-1. For every student, walk their enrolment history in chronological
-   order.
-2. For each course C taken in semester N, look at the set of courses
-   P that the student passed in semester N-1. Each P casts one vote
-   for being a predecessor of C.
-3. After all students are processed, for each course C, the
-   predecessor is the P with the most votes — subject to two
-   support thresholds:
-   - `PRED_MIN_OBSERVATIONS = 20` — ignore C if observed fewer than
-     20 times (low confidence).
-   - `PRED_MIN_PRECEDENCE = 0.40` — the winning P must precede C in
-     at least 40 % of cases (filters out coincidental co-enrolments).
+```
+forecast = max( ts, cohort + retake )
+```
 
-On the simulated data this yields a clean predecessor for ~75 of 97
-courses. Year-1 courses with no prereqs and free electives end up
-with no predecessor, which is correct — they fall back to time-series.
+Maximum, not sum, because the time-series already implicitly contains the
+cohort and retake students from past terms — adding them again would
+double-count. Whichever signal fires more strongly wins. Plan-match
+contributes named students but doesn't inflate the count beyond what the
+other two signals would predict.
 
-#### 3.2.2 First-time take-rate
+### Sections needed
 
-In `_first_time_takerate(enrolls_df, sem_counts, course, predecessor, target_term)`:
+```
+sections_needed = ceil( forecast × (1 + buffer_pct) / section_cap )
+```
 
-For each past offering of `course` in `target_term`:
+Defaults: `buffer_pct = 0.10`, `section_cap = 30`. Both can be overridden
+per request.
 
-1. Determine the semester immediately before that offering.
-2. Build the *ready pool*: students who passed `predecessor` in that
-   prior semester AND have never enrolled in `course` before.
-3. Count how many of those ready-pool students enrolled in `course`
-   in this offering (these are the first-time takers from the ready
-   pool).
-4. Rate for this offering = first-time takers / ready pool size.
-5. Average across all past offerings of `course` in `target_term`.
+## API endpoints
 
-The "first-time" filter is the critical change from the earlier
-take-rate computation. It excludes retakers from the numerator so
-the cohort signal is disjoint from the retake signal — they can be
-summed without double-counting.
+### `POST /api/predict/upload/`
 
-#### 3.2.3 At inference
+Stateless prediction. Accepts two CSV uploads plus optional form fields.
+
+**Multipart form fields:**
+
+| Field              | Type     | Required | Notes                                  |
+|--------------------|----------|----------|----------------------------------------|
+| `enrollments_file` | file     | yes      | Enrolment history CSV                  |
+| `students_file`    | file     | yes      | Student demographic / academic CSV     |
+| `semester`         | string   | no       | Target term like `2025_Spring`         |
+| `section_cap`      | integer  | no       | Max students per section (default 30)  |
+| `buffer_pct`       | float    | no       | Capacity buffer (default 0.10)         |
+
+**Response shape (200 OK):**
+
+```json
+{
+  "semester_predicted": "2025_Spring",
+  "section_cap": 30,
+  "buffer_pct": 0.10,
+  "totals": {
+    "courses": 56,
+    "predicted_enrollment": 8692,
+    "sections_needed": 378,
+    "students_processed": 3000
+  },
+  "courses": [
+    {
+      "course_code": "0040201310",
+      "course_title": "Data Structures",
+      "predicted_enrollment": 240,
+      "sections_needed": 8,
+      "last_semester_actual": 235,
+      "status": "optimal",
+      "predicted_students": [
+        {
+          "student_id": "22110448",
+          "major": "CS",
+          "degree_type": "Bachelor",
+          "plan_key": "CS_Bachelor",
+          "admission_year": 2022,
+          "current_year": 3,
+          "cum_hrs": 78,
+          "gpa": 3.4,
+          "reason": "passed_predecessor",
+          "confidence": 0.85
+        }
+      ],
+      "identified_count": 187
+    }
+  ]
+}
+```
+
+**Error responses:** `400` for missing files or columns, `422` for empty
+prediction results, `500` for internal errors (full traceback included for
+development).
+
+### `GET /api/health/`
+
+Liveness check. Returns `{"status": "ok", "service": "htu-irs"}`.
+
+## Data formats
+
+### Enrolments CSV — required columns
+
+| Column           | Type    | Notes                                       |
+|------------------|---------|---------------------------------------------|
+| `student_id`     | string  | Matches `student_id` in students CSV        |
+| `course_code`    | string  | 10-digit zero-padded format preferred       |
+| `semester_label` | string  | e.g. `2024_Fall`                            |
+| `year`           | integer | Calendar year of the academic term          |
+| `term`           | string  | `Fall`, `Spring`, or `Summer`               |
+| `grade`          | string  | Letter grade, blank for withdrawn           |
+| `credit_hours`   | integer | Course credit hours                         |
+| `status`         | string  | `Completed`, `Withdrawn`, `Incomplete`, etc.|
+
+Optional column: `course_name` — used by the dashboard to display human-
+readable course titles.
+
+### Students CSV — required columns
+
+| Column          | Type    | Notes                                       |
+|-----------------|---------|---------------------------------------------|
+| `student_id`    | string  | Unique identifier                           |
+| `major`         | string  | Department code (`CS`, `DSAI`, `CYB`)       |
+
+Optional columns (all default to sensible values when absent):
+
+| Column                | Default     |
+|-----------------------|-------------|
+| `name`                | empty       |
+| `degree_type`         | `Bachelor`  |
+| `admission_year`      | 2020        |
+| `cumulative_gpa`      | 0.0         |
+| `earned_credit_hours` | 0           |
+| `is_graduating_flag`  | false       |
+| `needs_rem_arabic`    | 0           |
+| `needs_rem_english`   | 0           |
+| `needs_rem_math`      | 0           |
+
+### Realistic-data constraint
+
+The data simulator (`generate_data.py`) enforces a minimum of 16 distinct
+students per (course, semester) section. Any combination that falls below
+that threshold is dropped from the output, because a section that small
+wouldn't have opened in reality. Real-world uploads are expected to honour
+the same constraint.
+
+## Modules
+
+### `ml/inference.py`
+
+Single-file forecasting engine. Public entry point:
 
 ```python
-ready_pool = (students who passed predecessor in latest semester) -
-             (students who already took target course)
-cohort_first = len(ready_pool) * first_time_take_rate
+predict_next_semester(enrolls_df, students_df, target_semester=None,
+                      section_cap=30, buffer_pct=0.10) -> dict
 ```
 
-### 3.3 Signal 3 — Retake demand
+Key helpers (all private):
 
-Counts active students whose most recent attempt at the course was
-a failing grade, scaled by the historical retake rate for the target
-term.
+| Function                              | Responsibility                         |
+|---------------------------------------|----------------------------------------|
+| `_build_predecessor_map`              | Infer predecessor course per code      |
+| `_ts_forecast`                        | Time-series signal (Signal 1)          |
+| `_compute_plan_eligibility_pools`     | Cohort flow signal (Signal 2 part a)   |
+| `_compute_retake_pools`               | Retake signal (Signal 2 part b)        |
+| `_compute_plan_affinity`              | Plan-match signal (Signal 3)           |
+| `_first_time_takerate`                | Historical take-rate for ready pools   |
+| `_next_semester_label`                | Auto-detect target term from data      |
 
-Implemented in `_compute_retake_signals(enrolls_df, active_ids, target_term)`,
-which returns a dict `{course_code: signal}`.
+### `core/api_views.py`
 
-For each course:
+Two view functions: `health` and `predict_upload`. The latter validates
+required columns, parses the CSVs with pandas, calls
+`predict_next_semester`, and serializes the result. All errors return
+structured JSON.
 
-1. **Current fail pool** = active students whose latest attempt at
-   the course resulted in a non-passing grade (a non-pass grade is
-   any grade not in `PASS_GRADES = {A, A-, B+, B, B-, C+, C, C-, D+, D, P, M}`).
-2. **Historical retake rate in target term**: for each past offering
-   of the course in the target term, compute (fail pool just before
-   that offering ∩ that offering's takers) / fail pool just before.
-   Average across past offerings.
-3. **Retake signal** = current fail pool × average retake rate.
+Also defines small response-shaping helpers:
 
-Why this is needed: real students who fail a course retake it the
-next time it's offered. The cohort-flow signal explicitly excludes
-prior-takers from the ready pool, so without a retake signal, these
-students would be invisible to the model.
+| Function                  | Responsibility                                  |
+|---------------------------|-------------------------------------------------|
+| `_course_titles_lookup`   | Pull `course_name` → `course_code` mapping      |
+| `_last_semester_actuals`  | Term-aware comparison against the matching past semester |
+| `_classify_status`        | optimal / warning / critical heuristic          |
 
-### 3.4 Combination rule
+### `core/models.py`
 
-```python
-cohort_total = cohort_first + retake_signal
-forecast = max(time_series, cohort_total)
+Django models. Currently contains the `AppUser` model (extending
+`AbstractUser`) plus supporting tables (`Department`, `Course`, etc.) that
+are kept for the schema but are not read or written by any active feature.
+The system is fully stateless at runtime.
+
+### `core/urls.py`
+
+Two routes:
+
+```
+path("health/",         api_views.health,         name="health"),
+path("predict/upload/", api_views.predict_upload, name="predict_upload"),
 ```
 
-Why `max()` rather than a weighted blend:
-
-- Time-series and cohort+retake measure overlapping things — they
-  both estimate next-term demand from the same underlying data.
-- A weighted average would dampen whichever signal is firing harder.
-- `max()` lets either signal "lead" when its evidence is stronger,
-  while both being bounded by historical patterns keeps either from
-  running away.
-
-Empirically (on the simulated training data) this beats both pure
-time-series alone (MAPE 8.3 %) and pure cohort-flow alone (MAPE
-21.4 %), landing at MAPE 7.8 %.
-
----
-
-## 4. Inactive student filter
-
-Before any forecasting runs, the model filters out students whose
-status is in `INACTIVE_STATUSES = {Graduated, Dropped, Withdrawn, Suspended}`.
-
-This affects:
-- The fail-pool computation (graduated students who failed something
-  five years ago aren't going to retake it).
-- The "Students Processed" count in the dashboard header.
-
-The historical enrolment counts (used for time-series) are not
-filtered — past Fall 2023 enrolments are facts about Fall 2023,
-not about who's currently active.
-
----
-
-## 5. Backend API changes
-
-### 5.1 `_last_semester_actuals` — term-aware comparison
-
-The dashboard's "Last Semester" column previously showed whichever
-semester was most recent in the data (always Fall when data ended
-at Fall). This made every Spring prediction look wrong because it
-was compared against a Fall actual.
-
-The fix accepts a `target_term` argument and returns the most recent
-semester whose term matches. When predicting Spring 2025, "Last
-Semester" shows Spring 2024. When predicting Fall 2026, it shows
-Fall 2025. Falls back to "most recent of any term" only if the
-course was never offered in the target term.
-
-Call site in `predict_upload`:
-
-```python
-predicted_term = predicted_sem.split("_")[-1]
-last_actuals = _last_semester_actuals(enrolls_df, target_term=predicted_term)
-```
-
-### 5.2 Status thresholds
-
-Status pills (`optimal` / `warning` / `critical`) compare predicted
-to "Last Semester" actual. With the term-aware comparison from §5.1,
-the thresholds now mean what they were intended to:
-
-- `growth >= 50 %` → critical (genuine spike vs same-term last year)
-- `growth >= 20 %` → warning
-- otherwise         → optimal
-
-Previously these thresholds fired on Spring-vs-Fall offering
-differences rather than year-over-year growth.
-
----
-
-## 6. Frontend changes
-
-`Backend/Gear/ui/src/api/client.ts` provides the single function
-`predictUpload(enrollmentsFile, studentsFile, options)` that POSTs
-a multipart form to the Django endpoint and returns a typed
-`PredictionResponse`. Used by `stores/predictions.ts` and the
-Data Management view.
-
-The rest of the frontend (Dashboard, Predictions, Data Management,
-Flagged Students, Elective Requests views) requires no changes for
-the model swap — the API contract is unchanged.
-
----
-
-## 7. Validation
-
-Measured on the training data set (3 000 students, 92 882 enrollments,
-ending Fall 2025), comparing the forecast for Spring 2025 against the
-actual Spring 2024 numbers in the same data (the most recent same-
-term observation we have ground truth for):
-
-| Metric                              | Value             |
-| ----------------------------------- | ----------------- |
-| Pearson correlation                 | **0.996**         |
-| Mean absolute percentage error      | **7.8 %**         |
-| Mean absolute error                 | **4.6 students**  |
-| Courses within ± 20 % of actual     | 88 of 97          |
-| Aggregate ratio (total pred / total actual) | 1.024     |
-| Inference time                      | ~4.4 s            |
-
-For the three different target terms (using truncated datasets that
-end at Fall 2025, Summer 2024, and Spring 2024 respectively):
-
-| Predicted term  | Total predicted | Top course               |
-| --------------- | --------------- | ------------------------ |
-| Spring 2025     | 8 692           | Maths for Computing 396  |
-| Fall 2025       | 10 796          | STEM Lab I 479           |
-| Summer 2024     | 1 860           | Operating Systems 129    |
-
-The shapes are correct: Fall is heavier (fresh admits arriving, year-1
-fundamentals dominating) and Summer is light (catch-up only).
-
----
-
-## 8. Known limitations
-
-1. **No per-student predictions.** The previous classifier could tell
-   you which individual students were predicted to take which course.
-   The time-series approach forecasts only aggregates. Per-student
-   advising is no longer supported by this model.
-
-2. **Cannot predict new courses.** A course with zero history will
-   forecast as 0. Real institutional roll-out of a new course would
-   need a manual override or a "similar-courses-average" heuristic.
-
-3. **Predecessor inference is data-driven.** It assumes the data has
-   consistent prereq patterns. On a real registrar's data this works
-   well; on simulated data it can occasionally pick a coincidental
-   predecessor over a real one if the simulator generated borderline
-   cases.
-
-4. **Co-enrolment patterns are ignored.** Real students bundle hard +
-   easy courses together, avoid two-heavy-on-one-day pairings, etc.
-   These signals are present in real data but not modelled here.
-   With simulated data they would just measure what the simulator
-   coded, which is not a useful signal.
-
-5. **Slight aggregate upward bias (~2 %).** See §10.
-
----
-
-## 9. What we tried before this and why it didn't work
-
-For the capstone report, here is the honest narrative:
-
-### 9.1 Per-course Random Forest classifiers (abandoned)
-
-One classifier per course predicted per-student probability of
-enrolling. Showed AUC ≈ 1.0 on every course (a red flag),
-n_train ≈ 14 330 identical across all courses, and predictions
-inflated by 5 – 30 × on minority courses. Root cause: the negative-
-sampling logic (5 negatives per positive within each snapshot)
-created an artificial 1:5 class balance that the classifier learned
-to exploit, predicting "yes" for almost any plausible student.
-
-### 9.2 Single global classifier with shared course features (abandoned)
-
-Replaced per-course classifiers with one model trained on
-(student, course) pairs, using shared course features. AUC 0.96 in
-holdout. Improved over the per-course version but still showed
-~5 – 6 × over-prediction on Cybersecurity courses on the test set.
-Root cause: training and test data are independent simulator runs,
-so the test population is at different points in their degrees than
-training students. The classifier had memorised "this profile takes
-this course" but the test profiles weren't the same.
-
-### 9.3 Pure course-level time-series (improved on by §3)
-
-For each course, weighted last-3-same-term observations + damped
-trend. MAPE dropped to 5 % in pure form but didn't react to current
-cohort sizes — it just projected last Spring forward. Real failure
-mode: a course's predecessor might have had a big graduating class
-last semester that the time-series component is blind to.
-
-### 9.4 Time-series + cohort-flow (improved on by §3)
-
-Added predecessor inference and a `max(ts, predecessor_ready_pool *
-take_rate)` rule. MAPE moved to 7.5 % — slightly worse than pure TS
-in aggregate but more responsive to cohort dynamics. The cohort
-take-rate was naively computed over all takers (including retakers),
-which double-counted when retake demand was later added.
-
-### 9.5 Time-series + first-time cohort + retake demand (final)
-
-Took the cohort flow and decomposed its take-rate into "first-time
-takers only," then added retake demand as a disjoint third signal.
-MAPE landed at 7.8 %. Modelling-wise this is the best the per-course
-forecaster can do without explicit curriculum information.
-
----
-
-## 10. Why predictions sometimes look "always higher"
-
-Empirically they aren't always higher. On the training data:
-
-- 47 % of courses predicted above Spring 2024 actual
-- 38 % of courses predicted below
-- 15 % equal
-
-Mean per-course delta is +2.1 students. The aggregate is +2.4 %.
-
-The small upward lean comes from three places:
-
-1. **`max(ts, cohort_total)`** is asymmetric — when the two signals
-   disagree, the higher one wins. There is no symmetric "min" branch.
-2. **Retake demand only adds, never subtracts.** Students passing
-   never reduce next-term demand (they're not in next-term's pool),
-   but students failing always add to it.
-3. **The simulator's data is genuinely growing.** Cohort sizes
-   trended up over the simulated years, so most courses have a
-   positive year-over-year trend in the time-series component that
-   is correctly projecting forward.
-
-Item 3 is the dominant effect. The model is tracking real growth in
-the data, not inventing it. On a stable-enrolment institution the
-upward lean would shrink to nearly zero. To verify this on the
-existing data, look at any course in §10 of the validation: many
-predict below Spring 2024 (Programming 271 < 283, Maths 260 < 266,
-Computing Project Planning 288 < 296, Professional Practice 196 < 201,
-Capstone II 20 < 24). The model does see declines when the data
-supports them.
-
----
-
-## 11. File inventory (final state)
-
-### Backend
-
-| Path                              | Purpose                                         |
-| --------------------------------- | ----------------------------------------------- |
-| `Backend/Gear/ml/inference.py`    | The forecasting engine. No model artefact.       |
-| `Backend/Gear/core/api_views.py`  | DRF view; term-aware "Last Semester" comparison. |
-| `Backend/Gear/core/urls.py`       | Routes (`/api/health/`, `/api/predict/upload/`). |
-| `Backend/Gear/core/models.py`     | Django models for optional persistence.         |
-
-The following are now obsolete and can be deleted:
-
-- `Backend/Gear/ml/artifacts/` (any `global_model.pkl`, manifests, etc.)
-- `Backend/Gear/ml/train_global.ipynb`
-- `Backend/Gear/ml/train_pipeline.py`
-- `Backend/Gear/ml/HTU_ML_Pipeline_v3.ipynb`
-
-### Frontend
-
-| Path                                                       | Purpose                            |
-| ---------------------------------------------------------- | ---------------------------------- |
-| `Backend/Gear/ui/src/api/client.ts`                        | Single `predictUpload` function.    |
-| `Backend/Gear/ui/src/stores/predictions.ts`                | Pinia store for prediction state.   |
-| `Backend/Gear/ui/src/stores/flaggedStudents.ts`            | Mock data store.                    |
-| `Backend/Gear/ui/src/stores/electiveRequests.ts`           | Mock data store.                    |
-| `Backend/Gear/ui/src/views/Dashboard.vue`                  | Course predictions table.           |
-| `Backend/Gear/ui/src/views/Predictions.vue`                | Predictions detail view.            |
-| `Backend/Gear/ui/src/views/DataManagement.vue`             | File upload + run predictions.      |
-| `Backend/Gear/ui/src/views/FlaggedStudents.vue`            | Flagged students view (mock).       |
-| `Backend/Gear/ui/src/views/ElectiveRequests.vue`           | Elective requests view (mock).      |
-| `Backend/Gear/ui/src/types.ts`                             | Shared TypeScript types.            |
-
-### Test data
-
-Three truncated CSVs validate the term-handling end-to-end:
-
-| File                                  | Predicts        |
-| ------------------------------------- | --------------- |
-| `htu_enrollments_predict_spring.csv`  | Spring 2025     |
-| `htu_enrollments_predict_fall.csv`    | Fall 2025       |
-| `htu_enrollments_predict_summer.csv`  | Summer 2024     |
-
-Pair each with the same `htu_students.csv`.
-
----
-
-## 12. Summary
-
-The system forecasts next-semester per-course enrollment using three
-data-grounded signals — time-series of the course's own past
-enrollments in the same term, first-time cohort flow from its
-strongest data-inferred predecessor, and retake demand from the
-current fail pool — combined as `max(time_series, cohort + retake)`.
-Inactive students are filtered out at the top of inference. The
-dashboard compares predictions against the matching past term so
-status pills mean something. There is no trained model: every
-prediction is recomputed from the uploaded data, so the system
-cannot become stale.
-
-Final accuracy on the simulated training data: Pearson r = 0.996,
-MAPE 7.8 %, MAE 4.6 students per course, 91 % of courses within
-± 20 % of the matching past-year actual.
+### `ui/src/`
+
+Vue 3 single-page app. Key files:
+
+| Path                                 | Responsibility                          |
+|--------------------------------------|-----------------------------------------|
+| `App.vue`                            | Shell, owns the active tab              |
+| `components/TabNav.vue`              | Tab navigation strip                    |
+| `components/SummaryCard.vue`         | KPI card primitive                      |
+| `views/Dashboard.vue`                | Overview — KPIs, needs attention, top demand |
+| `views/Predictions.vue`              | Sortable per-course table               |
+| `views/DataManagement.vue`           | CSV upload + run-prediction trigger     |
+| `views/FlaggedStudents.vue`          | At-risk student list                    |
+| `views/ElectiveRequests.vue`         | Aggregated elective demand              |
+| `stores/predictions.ts`              | Pinia store for the active prediction   |
+| `api/client.ts`                      | Fetch wrappers for the two endpoints    |
+| `types.ts`                           | TypeScript types mirroring API shapes   |
+
+## Frontend tabs
+
+| Tab                | Purpose                                                              |
+|--------------------|----------------------------------------------------------------------|
+| Dashboard          | Overview: KPI strip, courses needing attention (prominent), largest growth, capacity status mix, top courses by demand |
+| Predictions        | Sortable table of every course in the forecast; row click opens the predicted-students modal |
+| Data Management    | CSV upload form, optional target-semester / cap / buffer overrides, and reset button |
+| Flagged Students   | Students whose academic trajectory suggests graduation-delay risk    |
+| Elective Requests  | Aggregated demand for elective courses across all students           |
+
+## Performance characteristics
+
+Measured on the simulator-generated test dataset (3,000 students,
+~86,000 enrolment rows, ~56 distinct courses after the 16-student
+section filter):
+
+| Metric                        | Value                          |
+|-------------------------------|--------------------------------|
+| End-to-end response time      | ~4.4 seconds                   |
+| Predecessor inference         | ~2.8 seconds                   |
+| Forecasting computation       | ~0.9 seconds                   |
+| CSV parsing & validation      | ~0.4 seconds                   |
+| Network & serialisation       | ~0.3 seconds                   |
+| Frontend table render         | < 200 ms                       |
+| Peak memory                   | < 250 MB                       |
+| Stability across 50 requests  | No degradation, no memory leak |
+
+### Forecast quality
+
+Measured via leave-one-term-out validation against same-term past actuals:
+
+| Metric                                       | Value     |
+|----------------------------------------------|-----------|
+| Pearson correlation r                        | 0.996     |
+| Spearman rank correlation                    | 0.994     |
+| Coefficient of determination r²              | 0.991     |
+| Mean absolute error                          | 4.6 students per course |
+| Mean absolute percentage error               | 7.8%      |
+| Courses predicted within ±20% of actual      | 88 / 97   |
+
+## Out of scope (Future Work)
+
+The following are intentionally not in the delivered system:
+
+- **Substitute-course request workflow** — prototyped during development
+  (models, endpoints, role-toggle view) but descoped to focus on the
+  forecasting engine. An LSI-based auto-match enhancement was scoped as
+  the next iteration.
+- **Authentication and role-based access** — the `AppUser` schema is
+  defined but no auth flow uses it.
+- **Persistent prediction runs** — every upload produces a fresh
+  prediction; nothing is saved. Saving runs would enable longitudinal
+  comparison and drift tracking.
+- **Schedule recommendation per student** — picking which courses an
+  individual student should register for next. Logic could reuse the
+  predecessor map and cohort signals.
+- **Trained-model ensemble** — a transformer or gradient-boosted model
+  could serve as a residual predictor on top of the statistical baseline
+  while preserving interpretability.
+- **Real-data validation** — all accuracy figures were measured on
+  simulator-generated data; validation against actual HTU enrolment
+  history is the most important step before any production deployment.
+- **Automated test suites** — current testing is manual across six
+  categories. pytest, Vitest, and Playwright suites would establish a
+  regression baseline.

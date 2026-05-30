@@ -4,8 +4,11 @@
  *
  * High-level overview built entirely on top of the predictions store —
  * no separate fetch. Renders an empty-state pointer to Data Management
- * when there's no result yet; otherwise breaks the prediction down into
- * status mix, biggest growth courses, and largest sections.
+ * when there's no result yet; otherwise breaks the prediction down into:
+ *   1) KPI strip
+ *   2) Needs Attention (prominent — actual courses, not just a count)
+ *   3) Largest growth + Capacity status mix
+ *   4) Top courses by predicted demand
  */
 
 import { computed } from 'vue'
@@ -20,20 +23,14 @@ const emit = defineEmits<{
 
 const store = usePredictionsStore()
 
-// "2025_Fall" -> "Fall 2025"
 const semesterDisplay = computed(() => {
   if (!store.result) return ''
   const [year, term] = store.result.semester_predicted.split('_')
   return year && term ? `${term} ${year}` : store.result.semester_predicted
 })
 
-// Status mix counts.
 const statusCounts = computed(() => {
-  const counts: Record<CourseStatus, number> = {
-    optimal: 0,
-    warning: 0,
-    critical: 0,
-  }
+  const counts: Record<CourseStatus, number> = { optimal: 0, warning: 0, critical: 0 }
   if (!store.result) return counts
   for (const c of store.result.courses) counts[c.status]++
   return counts
@@ -41,18 +38,15 @@ const statusCounts = computed(() => {
 
 const totalCourses = computed(() => store.result?.totals.courses ?? 0)
 
-// Pct of courses that need attention (warning + critical).
+const attentionCount = computed(
+  () => statusCounts.value.warning + statusCounts.value.critical
+)
+
 const attentionPct = computed(() => {
   if (!totalCourses.value) return 0
-  return Math.round(
-    ((statusCounts.value.warning + statusCounts.value.critical) /
-      totalCourses.value) *
-      100,
-  )
+  return Math.round((attentionCount.value / totalCourses.value) * 100)
 })
 
-// Total enrollment growth vs last semester (only over courses where we
-// actually have a last-semester actual to compare against).
 const lastSemesterTotal = computed(() => {
   if (!store.result) return 0
   return store.result.courses.reduce(
@@ -67,7 +61,6 @@ const growthPct = computed(() => {
   return ((predicted - lastSemesterTotal.value) / lastSemesterTotal.value) * 100
 })
 
-// Top 5 courses by predicted demand.
 const topByDemand = computed(() => {
   if (!store.result) return []
   return [...store.result.courses]
@@ -75,8 +68,6 @@ const topByDemand = computed(() => {
     .slice(0, 5)
 })
 
-// Top 5 courses by absolute growth from last semester. Skip courses
-// without a last-semester actual since growth is undefined for those.
 const topByGrowth = computed(() => {
   if (!store.result) return []
   return store.result.courses
@@ -89,13 +80,38 @@ const topByGrowth = computed(() => {
     .slice(0, 5)
 })
 
+// Courses needing attention. Critical first, then warning. Within each
+// group, sort by absolute delta (or by predicted enrollment if no
+// last-semester actual). Cap at 12 visible rows.
+const needsAttention = computed(() => {
+  if (!store.result) return []
+  const rank: Record<CourseStatus, number> = { critical: 0, warning: 1, optimal: 2 }
+  return [...store.result.courses]
+    .filter((c) => c.status !== 'optimal')
+    .map((c) => {
+      const delta =
+        c.last_semester_actual !== null
+          ? c.predicted_enrollment - c.last_semester_actual
+          : null
+      return { course: c, delta }
+    })
+    .sort((a, b) => {
+      const r = rank[a.course.status] - rank[b.course.status]
+      if (r !== 0) return r
+      const da = a.delta ?? a.course.predicted_enrollment
+      const db = b.delta ?? b.course.predicted_enrollment
+      return Math.abs(db) - Math.abs(da)
+    })
+    .slice(0, 12)
+})
+
 const statusStyles: Record<CourseStatus, string> = {
   optimal: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
   warning: 'bg-amber-50 text-amber-700 ring-amber-600/20',
   critical: 'bg-red-50 text-red-700 ring-red-600/20',
 }
 
-const statusBars: Record<CourseStatus, string> = {
+const statusDot: Record<CourseStatus, string> = {
   optimal: 'bg-emerald-500',
   warning: 'bg-amber-500',
   critical: 'bg-red-500',
@@ -109,15 +125,25 @@ function statusPct(s: CourseStatus): number {
 }
 
 function deltaLabel(course: CoursePrediction): string {
-  if (course.last_semester_actual === null) return ''
+  if (course.last_semester_actual === null) return 'new'
   const delta = course.predicted_enrollment - course.last_semester_actual
   const sign = delta >= 0 ? '+' : ''
   return `${sign}${delta}`
 }
+
+function deltaTone(course: CoursePrediction): string {
+  if (course.last_semester_actual === null) {
+    return 'bg-slate-50 text-slate-600 ring-slate-500/20'
+  }
+  const delta = course.predicted_enrollment - course.last_semester_actual
+  if (delta > 0) return 'bg-blue-50 text-blue-700 ring-blue-600/20'
+  if (delta < 0) return 'bg-rose-50 text-rose-700 ring-rose-500/20'
+  return 'bg-slate-50 text-slate-600 ring-slate-500/20'
+}
 </script>
 
 <template>
-  <!-- Empty state -->
+  <!-- ── Empty state ─────────────────────────────────────────────────── -->
   <div
     v-if="!store.hasResult"
     class="rounded-xl border border-slate-200 bg-white p-12 text-center shadow-sm"
@@ -156,7 +182,7 @@ function deltaLabel(course: CoursePrediction): string {
     </button>
   </div>
 
-  <!-- Result -->
+  <!-- ── Result ──────────────────────────────────────────────────────── -->
   <div v-else class="space-y-6">
     <!-- Header -->
     <div class="flex items-end justify-between">
@@ -189,7 +215,7 @@ function deltaLabel(course: CoursePrediction): string {
       />
       <SummaryCard
         label="Needs Attention"
-        :value="`${statusCounts.warning + statusCounts.critical} (${attentionPct}%)`"
+        :value="`${attentionCount} (${attentionPct}%)`"
       />
       <SummaryCard
         label="Growth vs Last Sem"
@@ -201,56 +227,125 @@ function deltaLabel(course: CoursePrediction): string {
       />
     </div>
 
-    <!-- Two-column block: status mix + critical alerts -->
-    <div class="grid gap-6 lg:grid-cols-5">
-      <!-- Status mix -->
-      <div
-        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2"
-      >
-        <h3 class="text-base font-semibold text-slate-900">
-          Capacity status mix
-        </h3>
-        <p class="mt-0.5 text-sm text-slate-500">
-          {{ totalCourses }} courses across all majors.
-        </p>
-
-        <!-- Stacked bar -->
-        <div
-          class="mt-5 flex h-2 w-full overflow-hidden rounded-full bg-slate-100"
-        >
-          <div
-            v-for="s in statusOrder"
-            :key="s"
-            :class="statusBars[s]"
-            :style="{ width: `${statusPct(s)}%` }"
-          />
+    <!-- ── Needs Attention panel (prominent) ───────────────────────────── -->
+    <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+        <div>
+          <h3 class="text-base font-semibold text-slate-900">
+            Courses needing attention
+          </h3>
+          <p class="mt-0.5 text-sm text-slate-500">
+            Critical or warning capacity — review section counts before
+            registration opens.
+          </p>
         </div>
-
-        <!-- Legend rows -->
-        <ul class="mt-5 space-y-3">
-          <li
-            v-for="s in statusOrder"
-            :key="s"
-            class="flex items-center justify-between text-sm"
-          >
-            <span class="flex items-center gap-2">
-              <span
-                class="inline-block h-2 w-2 rounded-full"
-                :class="statusBars[s]"
-              />
-              <span class="capitalize text-slate-700">{{ s }}</span>
-            </span>
-            <span class="font-medium text-slate-900">
-              {{ statusCounts[s] }}
-              <span class="ml-1 text-xs font-normal text-slate-400">
-                ({{ statusPct(s).toFixed(0) }}%)
-              </span>
-            </span>
-          </li>
-        </ul>
+        <span
+          v-if="needsAttention.length"
+          class="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
+        >
+          <span class="inline-block h-2 w-2 rounded-full bg-red-500"></span>
+          {{ statusCounts.critical }} critical
+          <span class="text-slate-300">·</span>
+          <span class="inline-block h-2 w-2 rounded-full bg-amber-500"></span>
+          {{ statusCounts.warning }} warning
+        </span>
       </div>
 
-      <!-- Critical capacity alerts -->
+     <ul v-if="needsAttention.length" class="divide-y divide-slate-100">
+  <li
+    v-for="row in needsAttention"
+    :key="row.course.course_code"
+    class="grid grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] items-center gap-6 px-6 py-4"
+  >
+    <!-- 1. Status indicator -->
+    <span
+      class="inline-block h-2.5 w-2.5 flex-none rounded-full"
+      :class="statusDot[row.course.status]"
+    />
+
+    <!-- 2. Course identifiers -->
+    <div class="min-w-0">
+      <div class="font-medium text-slate-900">
+        {{ row.course.course_code }}
+      </div>
+      <div
+        v-if="row.course.course_title"
+        class="truncate text-xs text-slate-500"
+      >
+        {{ row.course.course_title }}
+      </div>
+    </div>
+
+    <!-- 3. NEW: Explicit Sections Needed -->
+    <div class="flex flex-col text-right">
+      <span class="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        Required Sections
+      </span>
+      <div class="text-sm font-semibold text-slate-900">
+        {{ row.course.sections_needed }}
+      </div>
+    </div>
+
+    <!-- 4. NEW: Explicit Predicted Demand -->
+    <div class="flex flex-col text-right">
+      <span class="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        Predicted Demand
+      </span>
+      <div class="flex items-center justify-end gap-2 text-sm">
+        <span
+          v-if="row.course.last_semester_actual !== null"
+          class="text-xs text-slate-500"
+        >
+          (was {{ row.course.last_semester_actual }})
+        </span>
+        <span class="font-semibold text-slate-900">
+          {{ row.course.predicted_enrollment }}
+        </span>
+        <span
+          class="inline-flex min-w-[3.5rem] justify-center rounded-md px-1.5 py-0.5 text-xs font-semibold ring-1 ring-inset"
+          :class="deltaTone(row.course)"
+        >
+          {{ deltaLabel(row.course) }}
+        </span>
+      </div>
+    </div>
+
+    <!-- 5. Status Badge -->
+    <span
+      class="ml-4 inline-flex w-20 justify-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ring-1 ring-inset"
+      :class="statusStyles[row.course.status]"
+    >
+      {{ row.course.status }}
+    </span>
+  </li>
+</ul>
+
+      <div
+        v-else
+        class="flex items-center justify-center gap-3 px-6 py-8 text-sm text-slate-500"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.75"
+          class="h-5 w-5 text-emerald-500"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="m4.5 12.75 6 6 9-13.5"
+          />
+        </svg>
+        <span class="text-slate-600">
+          All courses are within capacity targets. No action needed.
+        </span>
+      </div>
+    </div>
+
+    <!-- ── Two-column: largest growth + status mix ─────────────────────── -->
+    <div class="grid gap-6 lg:grid-cols-5">
       <div
         class="rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-3"
       >
@@ -287,12 +382,12 @@ function deltaLabel(course: CoursePrediction): string {
                 </span>
               </span>
               <span
-                class="inline-flex w-16 justify-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-600/20"
+                class="inline-flex w-14 justify-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-600/20"
               >
                 {{ deltaLabel(row.course) }}
               </span>
               <span
-                class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset"
+                class="inline-flex w-16 justify-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ring-1 ring-inset"
                 :class="statusStyles[row.course.status]"
               >
                 {{ row.course.status }}
@@ -301,9 +396,53 @@ function deltaLabel(course: CoursePrediction): string {
           </li>
         </ul>
       </div>
+
+      <div
+        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2"
+      >
+        <h3 class="text-base font-semibold text-slate-900">
+          Capacity status mix
+        </h3>
+        <p class="mt-0.5 text-sm text-slate-500">
+          {{ totalCourses }} courses across all majors.
+        </p>
+
+        <div
+          class="mt-5 flex h-2 w-full overflow-hidden rounded-full bg-slate-100"
+        >
+          <div
+            v-for="s in statusOrder"
+            :key="s"
+            :class="statusDot[s]"
+            :style="{ width: `${statusPct(s)}%` }"
+          />
+        </div>
+
+        <ul class="mt-5 space-y-3">
+          <li
+            v-for="s in statusOrder"
+            :key="s"
+            class="flex items-center justify-between text-sm"
+          >
+            <span class="flex items-center gap-2">
+              <span
+                class="inline-block h-2 w-2 rounded-full"
+                :class="statusDot[s]"
+              />
+              <span class="capitalize text-slate-700">{{ s }}</span>
+            </span>
+            <span class="font-medium text-slate-900">
+              {{ statusCounts[s] }}
+              <span class="ml-1 text-xs font-normal text-slate-400">
+                ({{ statusPct(s).toFixed(0) }}%)
+              </span>
+            </span>
+          </li>
+        </ul>
+      </div>
     </div>
 
-    <!-- Top demand list -->
+    <!-- ── Top demand list ─────────────────────────────────────────────── -->
     <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
       <div class="border-b border-slate-100 px-6 py-5">
         <h3 class="text-base font-semibold text-slate-900">

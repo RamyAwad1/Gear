@@ -68,6 +68,12 @@ REQUIRED_STUDENT_COLS = {
 STATUS_WARNING_PCT = 0.20    # >20% increase ⇒ warning
 STATUS_CRITICAL_PCT = 0.50   # >50% increase ⇒ critical
 
+# Minimum students required for a section to open. Courses whose forecast
+# falls below this floor are excluded from the response entirely — the
+# section wouldn't have opened in reality, so showing it as "0 sections,
+# 0 students, warning" is just noise in the dashboard.
+MIN_SECTION_SIZE = 16
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -399,18 +405,25 @@ def predict_upload(request):
             candidates_by_course[str(cc)] = rows
 
     courses_payload = []
+    total_predicted_enrollment = 0
+    total_sections_needed = 0
     for _, row in sections_df.sort_values(
         "predicted_count", ascending=False
     ).iterrows():
         cc = str(row["course_code"])
         predicted = int(row["predicted_count"])
+        # Drop forecasts below the section-size floor — these sections
+        # wouldn't open in reality, and they're just noise in the dashboard.
+        if predicted < MIN_SECTION_SIZE:
+            continue
         actual = last_actuals.get(cc)
         candidates = candidates_by_course.get(cc, [])
+        sections_needed = int(row["predicted_sections"])
         courses_payload.append({
             "course_code":           cc,
             "course_title":          titles.get(cc, ""),
             "predicted_enrollment":  predicted,
-            "sections_needed":       int(row["predicted_sections"]),
+            "sections_needed":       sections_needed,
             "last_semester_actual":  actual,  # may be None
             "status":                _classify_status(predicted, actual),
             # Identified students who are predicted to enrol. For TS-
@@ -421,6 +434,8 @@ def predict_upload(request):
             "predicted_students":    candidates,
             "identified_count":      len(candidates),
         })
+        total_predicted_enrollment += predicted
+        total_sections_needed += sections_needed
 
     response = {
         "semester_predicted": predicted_sem,
@@ -428,8 +443,8 @@ def predict_upload(request):
         "buffer_pct":         buffer_pct,
         "totals": {
             "courses":              len(courses_payload),
-            "predicted_enrollment": int(sections_df["predicted_count"].sum()),
-            "sections_needed":      int(sections_df["predicted_sections"].sum()),
+            "predicted_enrollment": total_predicted_enrollment,
+            "sections_needed":      total_sections_needed,
             "students_processed":   int(students_df["student_id"].nunique()),
         },
         "courses": courses_payload,
