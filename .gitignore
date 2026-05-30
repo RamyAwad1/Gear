@@ -14,6 +14,7 @@ ml/artifacts/shap_explainers/
 ml/artifacts/*.pkl
 ml/artifacts/model_timing_checkpoint.pkl
 ml/artifacts/all_model_results_checkpoint.pkl
+/node_modules/
 
 # Generated data (reproducible from notebooks)
 # ml/Data/output/*.csv
