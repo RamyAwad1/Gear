@@ -1,0 +1,283 @@
+next_sem,course_code,pred_prob_sum,pred_binary_sum,actual_count,course_name,credit_hours,category,is_compulsory,predicted_count,abs_error
+2024_Spring,0000201291,7,7,7,Apprenticeship for Computer Science 1,6.0,Market Requirement,0,7,0
+2024_Spring,0000201292,152,150,148,Apprenticeship for Computer Science 2,6.0,Market Requirement,0,152,4
+2024_Spring,0000201391,227,218,185,Computing Research Project,6.0,Major Compulsory,1,227,42
+2024_Spring,0000201392,25,27,25,Apprenticeship for Computer Science 3,6.0,Market Requirement,0,25,0
+2024_Spring,0000203280,204,204,204,Security,3.0,Major Compulsory,1,204,0
+2024_Spring,0000203290,9,8,9,Apprenticeship for Cybersecurity 1,6.0,Market Requirement,0,9,0
+2024_Spring,0000203291,128,135,130,Apprenticeship for Cybersecurity 2,6.0,Market Requirement,0,128,2
+2024_Spring,0000203360,54,55,53,Penetration Testing,3.0,Major Compulsory,1,54,1
+2024_Spring,0000203391,117,102,83,Apprenticeship for Cybersecurity 3,6.0,Market Requirement,0,117,34
+2024_Spring,0000203400,50,49,49,Risk Analysis and Systems Testing,3.0,Major Compulsory,1,50,1
+2024_Spring,0000203420,102,58,37,Secure Coding,3.0,Major Compulsory,1,102,65
+2024_Spring,0000204280,80,89,88,Principles of Data Science and Computing,3.0,Major Compulsory,1,80,8
+2024_Spring,0000204290,96,91,66,Apprenticeship for DS and AI 1,6.0,Market Requirement,0,96,30
+2024_Spring,0000204291,67,53,72,Apprenticeship for DS and AI 2,6.0,Market Requirement,0,67,5
+2024_Spring,0000204310,148,117,62,Advanced Programming for Data Analysis,3.0,Hidden Prerequisite,0,148,86
+2024_Spring,0000204311,77,76,73,Big Data Analytics and Visualization,3.0,Major Compulsory,1,77,4
+2024_Spring,0000204313,240,240,240,Business Process Support,3.0,Major Compulsory,1,240,0
+2024_Spring,0000204391,90,86,75,Apprenticeship for DS and AI 3,6.0,Market Requirement,0,90,15
+2024_Spring,0000204411,41,32,14,Time Series Analysis,3.0,Major Elective,0,41,27
+2024_Spring,0000204430,71,66,65,Data Mining,3.0,Major Compulsory,1,71,6
+2024_Spring,0000302222,11,12,12,Intro to Philosophy and Critical Thinking,1.0,University Elective,0,11,1
+2024_Spring,0010203180,326,347,266,Networking,3.0,Major Compulsory,1,326,60
+2024_Spring,0010203210,109,106,96,Network Security,3.0,Major Compulsory,1,109,13
+2024_Spring,0010203300,60,58,55,Information Security Management,3.0,Major Compulsory,1,60,5
+2024_Spring,0010203340,36,35,35,Cryptography,3.0,Major Compulsory,1,36,1
+2024_Spring,0010203361,60,60,60,Forensics,3.0,Major Compulsory,1,60,0
+2024_Spring,0010203362,134,113,93,Ethical Hacking,3.0,Major Compulsory,1,134,41
+2024_Spring,0010203380,217,204,132,Computer Organization and Design,3.0,Major Compulsory,1,217,85
+2024_Spring,0010203401,51,25,16,Incident Response Management,3.0,Major Elective,0,51,35
+2024_Spring,0010203410,60,28,18,Mobile and Wireless Security,3.0,Major Elective,0,60,42
+2024_Spring,0010203411,23,24,15,Internet of Things Security,3.0,Major Elective,0,23,8
+2024_Spring,0010203420,63,24,14,Secure System Design and Development,3.0,Major Elective,0,63,49
+2024_Spring,0010203421,5,5,5,Web Security,3.0,Major Elective,0,5,0
+2024_Spring,0010203491,29,30,32,Capstone Project I (Cyber),1.0,Major Compulsory,1,29,3
+2024_Spring,0010203492,23,25,24,Capstone Project II (Cyber),2.0,Major Compulsory,1,23,1
+2024_Spring,0010204210,93,94,87,Data Analytics,3.0,Major Compulsory,1,93,6
+2024_Spring,0010204250,89,85,85,AI and Intelligent Systems,3.0,Major Compulsory,1,89,4
+2024_Spring,0010204281,97,97,77,Data Science Programming,3.0,Major Compulsory,1,97,20
+2024_Spring,0010204282,270,272,252,Database Design and Development,3.0,Major Compulsory,1,270,18
+2024_Spring,0010204330,37,32,29,Modeling and Simulation,3.0,Major Compulsory,1,37,8
+2024_Spring,0010204350,85,81,76,Machine Learning,3.0,Major Compulsory,1,85,9
+2024_Spring,0010204351,30,27,33,Natural Language Processing,3.0,Major Compulsory,1,30,3
+2024_Spring,0010204431,58,27,24,Information Retrieval,3.0,Major Elective,0,58,34
+2024_Spring,0010204450,32,31,31,Deep Learning,3.0,Major Compulsory,1,32,1
+2024_Spring,0010204451,76,37,34,Pattern Recognition,3.0,Major Elective,0,76,42
+2024_Spring,0010204452,3,4,4,Computer Vision,3.0,Major Elective,0,3,1
+2024_Spring,0010204491,31,33,35,Capstone Project I (AI),1.0,Major Compulsory,1,31,4
+2024_Spring,0010204492,16,16,16,Capstone Project II (AI),2.0,Major Compulsory,1,16,0
+2024_Spring,0030301110,3,3,3,Remedial Arabic Language,0.0,University Requirement (Remedial),0,3,0
+2024_Spring,0030301111,96,101,101,Arabic Language & Communication Skills,1.0,University Compulsory,1,96,5
+2024_Spring,0030301120,10,11,11,Pre-Foundation English Intensive + Lab,0.0,University Requirement (Remedial),0,10,1
+2024_Spring,0030301121,187,206,186,English Pre-Intermediate Intensive + Lab,4.0,University Compulsory,1,187,1
+2024_Spring,0030301122,269,274,260,English Intermediate,3.0,University Compulsory,1,269,9
+2024_Spring,0030301123,235,240,222,English Upper-Intermediate,3.0,University Compulsory,1,235,13
+2024_Spring,0030301124,159,159,157,English Advanced,3.0,University Compulsory,1,159,2
+2024_Spring,0030301222,224,204,58,Research and Technical Writing,1.0,University Elective,0,224,166
+2024_Spring,0030302121,12,11,11,Science and Society Seminar I,1.0,University Elective,0,12,1
+2024_Spring,0030302122,193,178,57,Arab Contributions to Science and Art,1.0,University Elective,0,193,136
+2024_Spring,0030302129,259,286,157,Military Sciences,1.0,University Compulsory,1,259,102
+2024_Spring,0030302133,7,5,5,Jerusalem: History and Civilization,1.0,University Elective,0,7,2
+2024_Spring,0030302134,139,126,38,Jordan: History and Civilization,1.0,University Elective,0,139,101
+2024_Spring,0030302232,81,98,89,Leadership Camp,1.0,University Compulsory,1,81,8
+2024_Spring,0030302237,7,8,8,Free Choice Elective I,1.0,University Elective,0,7,1
+2024_Spring,0030303110,7,8,8,Remedial Math,0.0,University Requirement (Remedial),0,7,1
+2024_Spring,0030303111,398,426,259,Functional Math,3.0,College Compulsory,1,398,139
+2024_Spring,0030303121,97,97,90,STEM Lab I,1.0,College Compulsory,1,97,7
+2024_Spring,0040201100,328,332,283,Programming,3.0,College Compulsory,1,328,45
+2024_Spring,0040201200,80,86,86,Advanced Programming,3.0,Major Compulsory,1,80,6
+2024_Spring,0040201201,298,293,241,Data Structures and Algorithms,3.0,Major Compulsory,1,298,57
+2024_Spring,0040201220,264,263,263,Software Development Lifecycles,3.0,Major Compulsory,1,264,1
+2024_Spring,0040201260,204,208,158,Website Design and Development,3.0,Major Compulsory,1,204,46
+2024_Spring,0040201261,77,76,76,Prototyping,3.0,Major Compulsory,1,77,1
+2024_Spring,0040201290,309,311,296,Computing Project Planning,4.0,College Compulsory,1,309,13
+2024_Spring,0040201320,34,34,34,ERP Systems,3.0,Major Compulsory,1,34,0
+2024_Spring,0040201321,93,88,75,Systems Analysis and Design,3.0,Major Compulsory,1,93,18
+2024_Spring,0040201341,244,244,241,Operating Systems,3.0,Major Compulsory,1,244,3
+2024_Spring,0040201360,92,92,94,Application Development,3.0,Major Compulsory,1,92,2
+2024_Spring,0040201362,54,45,45,Games Engine and Scripting,3.0,Major Compulsory,1,54,9
+2024_Spring,0040201430,90,45,45,Database Programming,3.0,Major Compulsory,1,90,45
+2024_Spring,0040201440,28,26,29,Systems Programming,3.0,Major Compulsory,1,28,1
+2024_Spring,0040201441,93,58,24,Internet of Things,3.0,Major Elective,0,93,69
+2024_Spring,0040201442,7,4,6,Real Time Systems,3.0,Major Elective,0,7,1
+2024_Spring,0040201460,70,56,16,E-Commerce,3.0,Major Elective,0,70,54
+2024_Spring,0040201461,23,23,20,Mobile Application Development,3.0,Major Elective,0,23,3
+2024_Spring,0040201462,30,29,22,Virtual and Augmented Reality Development,3.0,Major Elective,0,30,8
+2024_Spring,0040201491,28,34,36,Capstone Project I,1.0,Major Compulsory,1,28,8
+2024_Spring,0040201492,24,23,24,Capstone Project II,2.0,Major Compulsory,1,24,0
+2024_Spring,0040302111,42,43,43,Professional Skills,1.0,University Compulsory,1,42,1
+2024_Spring,0040302211,202,201,201,Professional Practice,3.0,University Compulsory,1,202,1
+2024_Spring,0040302221,93,86,38,Speech and Debate,1.0,University Elective,0,93,55
+2024_Spring,0040302231,331,331,250,Entrepreneurship Bootcamp,4.0,University Compulsory,1,331,81
+2024_Spring,0040303121,272,269,266,Maths for Computing,3.0,College Compulsory,1,272,6
+2024_Spring,0040303130,330,339,284,Fundamentals of Computing,4.0,College Compulsory,1,330,46
+2024_Spring,0040303221,245,251,223,Discrete Maths,3.0,College Compulsory,1,245,22
+2024_Summer,0000201291,0,0,0,Apprenticeship for Computer Science 1,6.0,Market Requirement,0,0,0
+2024_Summer,0000201292,14,14,5,Apprenticeship for Computer Science 2,6.0,Market Requirement,0,14,9
+2024_Summer,0000201391,144,151,22,Computing Research Project,6.0,Major Compulsory,1,144,122
+2024_Summer,0000201392,51,61,20,Apprenticeship for Computer Science 3,6.0,Market Requirement,0,51,31
+2024_Summer,0000203280,132,144,69,Security,3.0,Major Compulsory,1,132,63
+2024_Summer,0000203290,1,2,2,Apprenticeship for Cybersecurity 1,6.0,Market Requirement,0,1,1
+2024_Summer,0000203291,8,5,1,Apprenticeship for Cybersecurity 2,6.0,Market Requirement,0,8,7
+2024_Summer,0000203360,56,57,47,Penetration Testing,3.0,Major Compulsory,1,56,9
+2024_Summer,0000203391,58,50,7,Apprenticeship for Cybersecurity 3,6.0,Market Requirement,0,58,51
+2024_Summer,0000203400,23,23,21,Risk Analysis and Systems Testing,3.0,Major Compulsory,1,23,2
+2024_Summer,0000203420,53,31,3,Secure Coding,3.0,Major Compulsory,1,53,50
+2024_Summer,0000204280,30,36,13,Principles of Data Science and Computing,3.0,Major Compulsory,1,30,17
+2024_Summer,0000204290,22,20,2,Apprenticeship for DS and AI 1,6.0,Market Requirement,0,22,20
+2024_Summer,0000204291,30,23,11,Apprenticeship for DS and AI 2,6.0,Market Requirement,0,30,19
+2024_Summer,0000204310,83,68,22,Advanced Programming for Data Analysis,3.0,Hidden Prerequisite,0,83,61
+2024_Summer,0000204311,37,38,17,Big Data Analytics and Visualization,3.0,Major Compulsory,1,37,20
+2024_Summer,0000204313,138,140,113,Business Process Support,3.0,Major Compulsory,1,138,25
+2024_Summer,0000204391,34,34,15,Apprenticeship for DS and AI 3,6.0,Market Requirement,0,34,19
+2024_Summer,0000204411,9,1,1,Time Series Analysis,3.0,Major Elective,0,9,8
+2024_Summer,0000204430,21,19,13,Data Mining,3.0,Major Compulsory,1,21,8
+2024_Summer,0000302222,0,0,0,Intro to Philosophy and Critical Thinking,1.0,University Elective,0,0,0
+2024_Summer,0010203180,128,136,34,Networking,3.0,Major Compulsory,1,128,94
+2024_Summer,0010203210,43,43,21,Network Security,3.0,Major Compulsory,1,43,22
+2024_Summer,0010203300,19,19,5,Information Security Management,3.0,Major Compulsory,1,19,14
+2024_Summer,0010203340,27,26,23,Cryptography,3.0,Major Compulsory,1,27,4
+2024_Summer,0010203361,27,27,25,Forensics,3.0,Major Compulsory,1,27,2
+2024_Summer,0010203362,62,42,17,Ethical Hacking,3.0,Major Compulsory,1,62,45
+2024_Summer,0010203380,127,129,34,Computer Organization and Design,3.0,Major Compulsory,1,127,93
+2024_Summer,0010203401,48,30,5,Incident Response Management,3.0,Major Elective,0,48,43
+2024_Summer,0010203410,41,14,3,Mobile and Wireless Security,3.0,Major Elective,0,41,38
+2024_Summer,0010203411,1,0,1,Internet of Things Security,3.0,Major Elective,0,1,0
+2024_Summer,0010203420,37,18,3,Secure System Design and Development,3.0,Major Elective,0,37,34
+2024_Summer,0010203421,0,0,0,Web Security,3.0,Major Elective,0,0,0
+2024_Summer,0010203491,13,12,12,Capstone Project I (Cyber),1.0,Major Compulsory,1,13,1
+2024_Summer,0010203492,16,17,16,Capstone Project II (Cyber),2.0,Major Compulsory,1,16,0
+2024_Summer,0010204210,54,58,8,Data Analytics,3.0,Major Compulsory,1,54,46
+2024_Summer,0010204250,40,41,19,AI and Intelligent Systems,3.0,Major Compulsory,1,40,21
+2024_Summer,0010204281,57,57,12,Data Science Programming,3.0,Major Compulsory,1,57,45
+2024_Summer,0010204282,146,162,40,Database Design and Development,3.0,Major Compulsory,1,146,106
+2024_Summer,0010204330,32,31,16,Modeling and Simulation,3.0,Major Compulsory,1,32,16
+2024_Summer,0010204350,48,47,16,Machine Learning,3.0,Major Compulsory,1,48,32
+2024_Summer,0010204351,22,23,7,Natural Language Processing,3.0,Major Compulsory,1,22,15
+2024_Summer,0010204431,33,19,5,Information Retrieval,3.0,Major Elective,0,33,28
+2024_Summer,0010204450,23,23,16,Deep Learning,3.0,Major Compulsory,1,23,7
+2024_Summer,0010204451,27,5,2,Pattern Recognition,3.0,Major Elective,0,27,25
+2024_Summer,0010204452,0,0,0,Computer Vision,3.0,Major Elective,0,0,0
+2024_Summer,0010204491,10,11,11,Capstone Project I (AI),1.0,Major Compulsory,1,10,1
+2024_Summer,0010204492,16,16,16,Capstone Project II (AI),2.0,Major Compulsory,1,16,0
+2024_Summer,0030301110,0,0,0,Remedial Arabic Language,0.0,University Requirement (Remedial),0,0,0
+2024_Summer,0030301111,5,5,4,Arabic Language & Communication Skills,1.0,University Compulsory,1,5,1
+2024_Summer,0030301120,0,0,0,Pre-Foundation English Intensive + Lab,0.0,University Requirement (Remedial),0,0,0
+2024_Summer,0030301121,20,24,17,English Pre-Intermediate Intensive + Lab,4.0,University Compulsory,1,20,3
+2024_Summer,0030301122,115,121,83,English Intermediate,3.0,University Compulsory,1,115,32
+2024_Summer,0030301123,130,152,26,English Upper-Intermediate,3.0,University Compulsory,1,130,104
+2024_Summer,0030301124,67,69,52,English Advanced,3.0,University Compulsory,1,67,15
+2024_Summer,0030301222,74,62,22,Research and Technical Writing,1.0,University Elective,0,74,52
+2024_Summer,0030302121,0,0,0,Science and Society Seminar I,1.0,University Elective,0,0,0
+2024_Summer,0030302122,73,66,15,Arab Contributions to Science and Art,1.0,University Elective,0,73,58
+2024_Summer,0030302129,76,83,41,Military Sciences,1.0,University Compulsory,1,76,35
+2024_Summer,0030302133,0,0,0,Jerusalem: History and Civilization,1.0,University Elective,0,0,0
+2024_Summer,0030302134,27,18,4,Jordan: History and Civilization,1.0,University Elective,0,27,23
+2024_Summer,0030302232,67,82,61,Leadership Camp,1.0,University Compulsory,1,67,6
+2024_Summer,0030302237,0,0,0,Free Choice Elective I,1.0,University Elective,0,0,0
+2024_Summer,0030303110,1,0,2,Remedial Math,0.0,University Requirement (Remedial),0,1,1
+2024_Summer,0030303111,130,132,26,Functional Math,3.0,College Compulsory,1,130,104
+2024_Summer,0030303121,10,10,7,STEM Lab I,1.0,College Compulsory,1,10,3
+2024_Summer,0040201100,117,127,31,Programming,3.0,College Compulsory,1,117,86
+2024_Summer,0040201200,51,62,55,Advanced Programming,3.0,Major Compulsory,1,51,4
+2024_Summer,0040201201,135,140,32,Data Structures and Algorithms,3.0,Major Compulsory,1,135,103
+2024_Summer,0040201220,152,158,102,Software Development Lifecycles,3.0,Major Compulsory,1,152,50
+2024_Summer,0040201260,97,99,13,Website Design and Development,3.0,Major Compulsory,1,97,84
+2024_Summer,0040201261,50,52,26,Prototyping,3.0,Major Compulsory,1,50,24
+2024_Summer,0040201290,107,120,33,Computing Project Planning,4.0,College Compulsory,1,107,74
+2024_Summer,0040201320,29,30,23,ERP Systems,3.0,Major Compulsory,1,29,6
+2024_Summer,0040201321,53,55,9,Systems Analysis and Design,3.0,Major Compulsory,1,53,44
+2024_Summer,0040201341,123,130,75,Operating Systems,3.0,Major Compulsory,1,123,48
+2024_Summer,0040201360,32,32,11,Application Development,3.0,Major Compulsory,1,32,21
+2024_Summer,0040201362,22,18,3,Games Engine and Scripting,3.0,Major Compulsory,1,22,19
+2024_Summer,0040201430,45,22,8,Database Programming,3.0,Major Compulsory,1,45,37
+2024_Summer,0040201440,21,23,18,Systems Programming,3.0,Major Compulsory,1,21,3
+2024_Summer,0040201441,36,18,2,Internet of Things,3.0,Major Elective,0,36,34
+2024_Summer,0040201442,0,0,0,Real Time Systems,3.0,Major Elective,0,0,0
+2024_Summer,0040201460,23,15,1,E-Commerce,3.0,Major Elective,0,23,22
+2024_Summer,0040201461,2,2,2,Mobile Application Development,3.0,Major Elective,0,2,0
+2024_Summer,0040201462,2,0,2,Virtual and Augmented Reality Development,3.0,Major Elective,0,2,0
+2024_Summer,0040201491,13,14,18,Capstone Project I,1.0,Major Compulsory,1,13,5
+2024_Summer,0040201492,18,17,17,Capstone Project II,2.0,Major Compulsory,1,18,1
+2024_Summer,0040302111,2,2,2,Professional Skills,1.0,University Compulsory,1,2,0
+2024_Summer,0040302211,134,139,113,Professional Practice,3.0,University Compulsory,1,134,21
+2024_Summer,0040302221,14,9,4,Speech and Debate,1.0,University Elective,0,14,10
+2024_Summer,0040302231,137,131,32,Entrepreneurship Bootcamp,4.0,University Compulsory,1,137,105
+2024_Summer,0040303121,126,135,75,Maths for Computing,3.0,College Compulsory,1,126,51
+2024_Summer,0040303130,72,80,25,Fundamentals of Computing,4.0,College Compulsory,1,72,47
+2024_Summer,0040303221,136,145,41,Discrete Maths,3.0,College Compulsory,1,136,95
+2025_Fall,0000201291,0,0,0,Apprenticeship for Computer Science 1,6.0,Market Requirement,0,0,0
+2025_Fall,0000201292,17,15,16,Apprenticeship for Computer Science 2,6.0,Market Requirement,0,17,1
+2025_Fall,0000201391,318,320,306,Computing Research Project,6.0,Major Compulsory,1,318,12
+2025_Fall,0000201392,105,116,120,Apprenticeship for Computer Science 3,6.0,Market Requirement,0,105,15
+2025_Fall,0000203280,223,233,229,Security,3.0,Major Compulsory,1,223,6
+2025_Fall,0000203290,0,0,0,Apprenticeship for Cybersecurity 1,6.0,Market Requirement,0,0,0
+2025_Fall,0000203291,18,19,23,Apprenticeship for Cybersecurity 2,6.0,Market Requirement,0,18,5
+2025_Fall,0000203360,65,66,64,Penetration Testing,3.0,Major Compulsory,1,65,1
+2025_Fall,0000203391,136,123,92,Apprenticeship for Cybersecurity 3,6.0,Market Requirement,0,136,44
+2025_Fall,0000203400,36,35,35,Risk Analysis and Systems Testing,3.0,Major Compulsory,1,36,1
+2025_Fall,0000203420,102,64,54,Secure Coding,3.0,Major Compulsory,1,102,48
+2025_Fall,0000204280,77,84,93,Principles of Data Science and Computing,3.0,Major Compulsory,1,77,16
+2025_Fall,0000204290,37,31,29,Apprenticeship for DS and AI 1,6.0,Market Requirement,0,37,8
+2025_Fall,0000204291,60,53,73,Apprenticeship for DS and AI 2,6.0,Market Requirement,0,60,13
+2025_Fall,0000204310,132,101,71,Advanced Programming for Data Analysis,3.0,Hidden Prerequisite,0,132,61
+2025_Fall,0000204311,73,74,66,Big Data Analytics and Visualization,3.0,Major Compulsory,1,73,7
+2025_Fall,0000204313,183,185,185,Business Process Support,3.0,Major Compulsory,1,183,2
+2025_Fall,0000204391,65,65,62,Apprenticeship for DS and AI 3,6.0,Market Requirement,0,65,3
+2025_Fall,0000204411,16,4,9,Time Series Analysis,3.0,Major Elective,0,16,7
+2025_Fall,0000204430,24,20,20,Data Mining,3.0,Major Compulsory,1,24,4
+2025_Fall,0000302222,0,0,0,Intro to Philosophy and Critical Thinking,1.0,University Elective,0,0,0
+2025_Fall,0010203180,248,253,225,Networking,3.0,Major Compulsory,1,248,23
+2025_Fall,0010203210,87,85,84,Network Security,3.0,Major Compulsory,1,87,3
+2025_Fall,0010203300,43,41,43,Information Security Management,3.0,Major Compulsory,1,43,0
+2025_Fall,0010203340,32,31,31,Cryptography,3.0,Major Compulsory,1,32,1
+2025_Fall,0010203361,50,50,50,Forensics,3.0,Major Compulsory,1,50,0
+2025_Fall,0010203362,121,78,66,Ethical Hacking,3.0,Major Compulsory,1,121,55
+2025_Fall,0010203380,234,221,193,Computer Organization and Design,3.0,Major Compulsory,1,234,41
+2025_Fall,0010203401,87,54,30,Incident Response Management,3.0,Major Elective,0,87,57
+2025_Fall,0010203410,88,32,30,Mobile and Wireless Security,3.0,Major Elective,0,88,58
+2025_Fall,0010203411,0,0,0,Internet of Things Security,3.0,Major Elective,0,0,0
+2025_Fall,0010203420,76,39,34,Secure System Design and Development,3.0,Major Elective,0,76,42
+2025_Fall,0010203421,0,0,0,Web Security,3.0,Major Elective,0,0,0
+2025_Fall,0010203491,16,14,16,Capstone Project I (Cyber),1.0,Major Compulsory,1,16,0
+2025_Fall,0010203492,30,32,31,Capstone Project II (Cyber),2.0,Major Compulsory,1,30,1
+2025_Fall,0010204210,96,104,76,Data Analytics,3.0,Major Compulsory,1,96,20
+2025_Fall,0010204250,85,84,84,AI and Intelligent Systems,3.0,Major Compulsory,1,85,1
+2025_Fall,0010204281,120,123,112,Data Science Programming,3.0,Major Compulsory,1,120,8
+2025_Fall,0010204282,286,300,291,Database Design and Development,3.0,Major Compulsory,1,286,5
+2025_Fall,0010204330,45,43,38,Modeling and Simulation,3.0,Major Compulsory,1,45,7
+2025_Fall,0010204350,94,91,87,Machine Learning,3.0,Major Compulsory,1,94,7
+2025_Fall,0010204351,43,44,46,Natural Language Processing,3.0,Major Compulsory,1,43,3
+2025_Fall,0010204431,61,36,27,Information Retrieval,3.0,Major Elective,0,61,34
+2025_Fall,0010204450,26,25,25,Deep Learning,3.0,Major Compulsory,1,26,1
+2025_Fall,0010204451,49,9,25,Pattern Recognition,3.0,Major Elective,0,49,24
+2025_Fall,0010204452,0,0,0,Computer Vision,3.0,Major Elective,0,0,0
+2025_Fall,0010204491,18,18,18,Capstone Project I (AI),1.0,Major Compulsory,1,18,0
+2025_Fall,0010204492,30,31,30,Capstone Project II (AI),2.0,Major Compulsory,1,30,0
+2025_Fall,0030301110,0,0,0,Remedial Arabic Language,0.0,University Requirement (Remedial),0,0,0
+2025_Fall,0030301111,5,6,6,Arabic Language & Communication Skills,1.0,University Compulsory,1,5,1
+2025_Fall,0030301120,0,0,0,Pre-Foundation English Intensive + Lab,0.0,University Requirement (Remedial),0,0,0
+2025_Fall,0030301121,25,31,29,English Pre-Intermediate Intensive + Lab,4.0,University Compulsory,1,25,4
+2025_Fall,0030301122,146,150,146,English Intermediate,3.0,University Compulsory,1,146,0
+2025_Fall,0030301123,311,330,289,English Upper-Intermediate,3.0,University Compulsory,1,311,22
+2025_Fall,0030301124,99,101,100,English Advanced,3.0,University Compulsory,1,99,1
+2025_Fall,0030301222,103,74,30,Research and Technical Writing,1.0,University Elective,0,103,73
+2025_Fall,0030302121,0,0,0,Science and Society Seminar I,1.0,University Elective,0,0,0
+2025_Fall,0030302122,93,79,26,Arab Contributions to Science and Art,1.0,University Elective,0,93,67
+2025_Fall,0030302129,95,102,65,Military Sciences,1.0,University Compulsory,1,95,30
+2025_Fall,0030302133,0,0,0,Jerusalem: History and Civilization,1.0,University Elective,0,0,0
+2025_Fall,0030302134,41,23,8,Jordan: History and Civilization,1.0,University Elective,0,41,33
+2025_Fall,0030302232,75,90,81,Leadership Camp,1.0,University Compulsory,1,75,6
+2025_Fall,0030302237,0,0,0,Free Choice Elective I,1.0,University Elective,0,0,0
+2025_Fall,0030303110,0,0,0,Remedial Math,0.0,University Requirement (Remedial),0,0,0
+2025_Fall,0030303111,257,255,223,Functional Math,3.0,College Compulsory,1,257,34
+2025_Fall,0030303121,8,7,7,STEM Lab I,1.0,College Compulsory,1,8,1
+2025_Fall,0040201100,258,271,237,Programming,3.0,College Compulsory,1,258,21
+2025_Fall,0040201200,52,59,59,Advanced Programming,3.0,Major Compulsory,1,52,7
+2025_Fall,0040201201,330,340,273,Data Structures and Algorithms,3.0,Major Compulsory,1,330,57
+2025_Fall,0040201220,210,212,217,Software Development Lifecycles,3.0,Major Compulsory,1,210,7
+2025_Fall,0040201260,240,249,211,Website Design and Development,3.0,Major Compulsory,1,240,29
+2025_Fall,0040201261,86,86,86,Prototyping,3.0,Major Compulsory,1,86,0
+2025_Fall,0040201290,276,283,279,Computing Project Planning,4.0,College Compulsory,1,276,3
+2025_Fall,0040201320,40,40,40,ERP Systems,3.0,Major Compulsory,1,40,0
+2025_Fall,0040201321,105,102,94,Systems Analysis and Design,3.0,Major Compulsory,1,105,11
+2025_Fall,0040201341,194,201,203,Operating Systems,3.0,Major Compulsory,1,194,9
+2025_Fall,0040201360,73,74,74,Application Development,3.0,Major Compulsory,1,73,1
+2025_Fall,0040201362,46,38,41,Games Engine and Scripting,3.0,Major Compulsory,1,46,5
+2025_Fall,0040201430,78,38,39,Database Programming,3.0,Major Compulsory,1,78,39
+2025_Fall,0040201440,30,30,33,Systems Programming,3.0,Major Compulsory,1,30,3
+2025_Fall,0040201441,69,41,16,Internet of Things,3.0,Major Elective,0,69,53
+2025_Fall,0040201442,0,0,0,Real Time Systems,3.0,Major Elective,0,0,0
+2025_Fall,0040201460,44,30,15,E-Commerce,3.0,Major Elective,0,44,29
+2025_Fall,0040201461,1,0,1,Mobile Application Development,3.0,Major Elective,0,1,0
+2025_Fall,0040201462,1,0,2,Virtual and Augmented Reality Development,3.0,Major Elective,0,1,1
+2025_Fall,0040201491,15,16,24,Capstone Project I,1.0,Major Compulsory,1,15,9
+2025_Fall,0040201492,34,33,34,Capstone Project II,2.0,Major Compulsory,1,34,0
+2025_Fall,0040302111,1,1,1,Professional Skills,1.0,University Compulsory,1,1,0
+2025_Fall,0040302211,231,233,232,Professional Practice,3.0,University Compulsory,1,231,1
+2025_Fall,0040302221,22,16,7,Speech and Debate,1.0,University Elective,0,22,15
+2025_Fall,0040302231,309,303,234,Entrepreneurship Bootcamp,4.0,University Compulsory,1,309,75
+2025_Fall,0040303121,213,219,215,Maths for Computing,3.0,College Compulsory,1,213,2
+2025_Fall,0040303130,106,113,100,Fundamentals of Computing,4.0,College Compulsory,1,106,6
+2025_Fall,0040303221,301,309,291,Discrete Maths,3.0,College Compulsory,1,301,10

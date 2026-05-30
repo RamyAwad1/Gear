@@ -29,7 +29,7 @@ SECRET_KEY = 'django-insecure-rg%u)==8h=ap^)y7tc&fbf+-t1t5(e(hlqlcj9ms#r%d6-d&p)
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 
 # Application definition
@@ -41,11 +41,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
+    # Third-party
+    'rest_framework',
+    'corsheaders',
+
+    # Local
     'core',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',          # before CommonMiddleware
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -82,7 +89,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'htu_registration',
         'USER': 'postgres',
-        'PASSWORD': os.getenv('DB_PASSWORD'),  
+        'PASSWORD': os.getenv('DB_PASSWORD'),
         'HOST': 'localhost',
         'PORT': '5432',
     }
@@ -126,3 +133,34 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 AUTH_USER_MODEL = 'core.AppUser'
+
+
+# ── REST framework ────────────────────────────────────────────────────────────
+REST_FRAMEWORK = {
+    # The prediction endpoint is read-only and stateless; permissions are
+    # handled at the network level for now (the API runs on localhost).
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.AllowAny',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+}
+
+
+# ── File upload limits ────────────────────────────────────────────────────────
+# htu_enrollments.csv is ~8 MB; bump the in-memory ceiling so it's never
+# spilled to a temp file on the typical dev machine.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024   # 50 MB
+
+
+# ── CORS (Vue dev server) ─────────────────────────────────────────────────────
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:5173',   # Vite default
+    'http://127.0.0.1:5173',
+]
+# Multipart uploads from the Vue dev server are exempt from CSRF as long
+# as we don't rely on session auth for the API; the AllowAny + JSON-only
+# endpoint configuration above is consistent with that.

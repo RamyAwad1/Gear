@@ -2,8 +2,25 @@
 venv/
 __pycache__/
 
-# Environment variables 
+# Environment variables
 .env
 
-# Local database (if you ever use SQLite)
+# Local database
 db.sqlite3
+
+# ML artifacts (too large for GitHub)
+ml/artifacts/course_models/
+ml/artifacts/shap_explainers/
+ml/artifacts/*.pkl
+ml/artifacts/model_timing_checkpoint.pkl
+ml/artifacts/all_model_results_checkpoint.pkl
+/node_modules/
+
+# Generated data (reproducible from notebooks)
+# ml/Data/output/*.csv
+# ml/plots/
+# ml/results/
+# output/
+
+# Jupyter checkpoints
+#.ipynb_checkpoints/

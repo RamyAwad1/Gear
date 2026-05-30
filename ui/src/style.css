@@ -1,0 +1,25 @@
+/*
+ * Global stylesheet.
+ *
+ * One @import pulls in all of Tailwind v4. The @theme block customizes
+ * the default token set — here we register Plus Jakarta Sans as the app
+ * font so any `font-sans` utility (and the implicit body default) picks
+ * it up. If you prefer a different font, change the @import url and the
+ * --font-sans value below.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+  font-feature-settings: 'cv11' on, 'ss01' on;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

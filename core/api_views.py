@@ -1,0 +1,452 @@
+"""
+Stateless prediction API.
+=========================
+Accepts two CSV uploads (enrollments + students), runs the trained
+ML pipeline in-memory, and returns the per-course "sections needed"
+recommendation as JSON.
+
+Endpoints
+---------
+GET  /api/health/            — simple liveness check
+POST /api/predict/upload/    — multipart form with two files:
+                                 - enrollments_file  (htu_enrollments.csv)
+                                 - students_file     (htu_students.csv)
+                               Optional form fields:
+                                 - semester  (e.g. "2026_Fall")  — overrides
+                                                                    auto-detect
+                                 - section_cap   (int)
+                                 - buffer_pct    (float, e.g. 0.10)
+
+Response shape (200 OK)
+-----------------------
+{
+  "semester_predicted": "2026_Fall",
+  "section_cap":        30,
+  "buffer_pct":         0.10,
+  "totals": {
+    "courses":           87,
+    "predicted_enrollment": 2847,
+    "sections_needed":   94,
+    "students_processed": 1284
+  },
+  "courses": [
+    {
+      "course_code":          "0010203210",
+      "course_title":         "Data Structures",
+      "predicted_enrollment": 240,
+      "sections_needed":      8,
+      "last_semester_actual": 235,
+      "status":               "optimal"   // optimal | warning | critical
+    },
+    ...
+  ]
+}
+"""
+
+import io
+import traceback
+
+import pandas as pd
+from rest_framework import status
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+
+from ml.inference import predict_next_semester
+
+
+# ── Required CSV columns (mirrors load_csv_data.py) ──────────────────────────
+REQUIRED_ENROLLMENT_COLS = {
+    "student_id", "course_code", "semester_label",
+    "grade", "credit_hours",
+}
+REQUIRED_STUDENT_COLS = {
+    "student_id", "major",
+}
+
+# ── Status thresholds (gap between predicted and last-semester actual) ───────
+STATUS_WARNING_PCT = 0.20    # >20% increase ⇒ warning
+STATUS_CRITICAL_PCT = 0.50   # >50% increase ⇒ critical
+
+# Minimum students required for a section to open. Courses whose forecast
+# falls below this floor are excluded from the response entirely — the
+# section wouldn't have opened in reality, so showing it as "0 sections,
+# 0 students, warning" is just noise in the dashboard.
+MIN_SECTION_SIZE = 16
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _err(message, code=status.HTTP_400_BAD_REQUEST, **extra):
+    """Return a uniform JSON error response."""
+    body = {"error": message}
+    body.update(extra)
+    return Response(body, status=code)
+
+
+def _parse_semester_label(label):
+    """
+    Parse '2024_Fall' → (2024, 'Fall').  Mirrors the loader's logic so
+    the API tolerates the same variations users may have in their files.
+    """
+    s = str(label).strip()
+    if "_" in s:
+        year_str, term = s.split("_", 1)
+        if year_str.isdigit():
+            return int(year_str), term
+    for term_name in ("Fall", "Spring", "Summer"):
+        if term_name in s:
+            digits = "".join(c for c in s if c.isdigit())
+            year = int(digits) if digits else 2024
+            return year, term_name
+    return 2024, "Fall"
+
+
+def _read_uploaded_csv(uploaded_file, dtype=None):
+    """Read a Django InMemoryUploadedFile into a DataFrame."""
+    raw = uploaded_file.read()
+    return pd.read_csv(io.BytesIO(raw), dtype=dtype)
+
+
+def _coerce_enrollments(df):
+    """
+    Ensure the enrollments DataFrame has the columns predict_next_semester
+    expects: student_id, course_code, semester_label, year, term, grade,
+    credit_hours.  Adds year/term if only semester_label is present.
+    """
+    df = df.copy()
+    df["student_id"] = df["student_id"].astype(str)
+    df["course_code"] = df["course_code"].astype(str).str.strip().str.zfill(10)
+
+    if "year" not in df.columns or "term" not in df.columns:
+        parsed = df["semester_label"].apply(_parse_semester_label)
+        df["year"] = [p[0] for p in parsed]
+        df["term"] = [p[1] for p in parsed]
+    else:
+        df["year"] = df["year"].astype(int)
+        df["term"] = df["term"].astype(str)
+
+    df["grade"] = df["grade"].fillna("").astype(str)
+    df["credit_hours"] = df.get("credit_hours", 3).fillna(3).astype(int)
+    return df
+
+
+def _coerce_students(df):
+    """
+    Ensure the students DataFrame has the columns predict_next_semester needs:
+    student_id, major, degree_type, admission_year,
+    needs_rem_arabic/english/math.  Fills sensible defaults for optional cols.
+    """
+    df = df.copy()
+    df["student_id"] = df["student_id"].astype(str)
+    df["major"] = df["major"].astype(str).str.strip()
+
+    if "degree_type" not in df.columns:
+        df["degree_type"] = "Bachelor"
+    else:
+        df["degree_type"] = df["degree_type"].fillna("Bachelor").astype(str)
+        df.loc[~df["degree_type"].isin(["Bachelor", "Technical"]),
+               "degree_type"] = "Bachelor"
+
+    if "admission_year" not in df.columns:
+        df["admission_year"] = df.get("start_year", 2020)
+    df["admission_year"] = (
+        pd.to_numeric(df["admission_year"], errors="coerce")
+        .fillna(2020).astype(int)
+    )
+
+    for col in ("needs_rem_arabic", "needs_rem_english", "needs_rem_math"):
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = (
+            pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        )
+    return df
+
+
+def _last_semester_actuals(enrolls_df, target_term=None):
+    """
+    Compute the actual number of students that took each course in the
+    most recent *comparable* semester — i.e. the most recent past
+    semester whose term matches what we're predicting next.
+
+    If we're predicting Spring 2025, this returns Spring 2024 counts
+    (not Fall 2025) so the dashboard's "Last Semester" column is an
+    apples-to-apples comparison.
+
+    target_term should be one of "Fall", "Spring", "Summer". If None,
+    falls back to the most recent semester of any term.
+    """
+    if "sem_sort_key" not in enrolls_df.columns:
+        sort_keys = enrolls_df["year"].astype(int) * 10 + enrolls_df["term"].map(
+            {"Spring": 1, "Summer": 2, "Fall": 3}
+        ).fillna(0).astype(int)
+    else:
+        sort_keys = enrolls_df["sem_sort_key"]
+
+    df = enrolls_df.assign(_sort=sort_keys)
+
+    if target_term is not None:
+        df_term = df[df["term"] == target_term]
+        if len(df_term) > 0:
+            last_key = df_term["_sort"].max()
+            last_df = df_term[df_term["_sort"] == last_key]
+        else:
+            # Course was never offered in target term — fall back so the
+            # column isn't blank.
+            last_key = df["_sort"].max()
+            last_df = df[df["_sort"] == last_key]
+    else:
+        last_key = df["_sort"].max()
+        last_df = df[df["_sort"] == last_key]
+
+    counts = (
+        last_df.groupby("course_code")["student_id"]
+        .nunique().to_dict()
+    )
+    return counts
+
+
+def _course_titles_lookup(enrolls_df):
+    """course_code → most common course_name from the enrollments file."""
+    if "course_name" not in enrolls_df.columns:
+        return {}
+    return (
+        enrolls_df.dropna(subset=["course_name"])
+        .groupby("course_code")["course_name"]
+        .agg(lambda s: s.mode().iat[0] if not s.mode().empty else "")
+        .to_dict()
+    )
+
+
+def _classify_status(predicted, actual):
+    """Heuristic for the colored pill in the UI."""
+    if actual is None or actual == 0:
+        return "warning"
+    growth = (predicted - actual) / actual
+    if growth >= STATUS_CRITICAL_PCT:
+        return "critical"
+    if growth >= STATUS_WARNING_PCT:
+        return "warning"
+    return "optimal"
+
+
+# ── Views ────────────────────────────────────────────────────────────────────
+
+@api_view(["GET"])
+def health(request):
+    """Quick check that the API process is alive and the ML module imports."""
+    return Response({"status": "ok", "service": "gear-api"})
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def predict_upload(request):
+    """
+    Accept enrollments + students CSVs, run the pipeline, return JSON.
+    Stateless — nothing is written to the database.
+    """
+    enrollments_file = request.FILES.get("enrollments_file")
+    students_file = request.FILES.get("students_file")
+
+    if enrollments_file is None or students_file is None:
+        return _err(
+            "Both 'enrollments_file' and 'students_file' must be provided "
+            "as multipart file fields."
+        )
+
+    # 1. Read the CSVs
+    try:
+        enrolls_raw = _read_uploaded_csv(
+            enrollments_file,
+            dtype={"student_id": str, "course_code": str},
+        )
+        students_raw = _read_uploaded_csv(
+            students_file, dtype={"student_id": str},
+        )
+    except Exception as exc:
+        return _err(f"Failed to read CSV: {exc}")
+
+    # 2. Validate required columns
+    missing_e = REQUIRED_ENROLLMENT_COLS - set(enrolls_raw.columns)
+    if missing_e:
+        return _err(
+            "Enrollments CSV is missing required columns.",
+            missing_columns=sorted(missing_e),
+        )
+    missing_s = REQUIRED_STUDENT_COLS - set(students_raw.columns)
+    if missing_s:
+        return _err(
+            "Students CSV is missing required columns.",
+            missing_columns=sorted(missing_s),
+        )
+
+    # 3. Normalize column types/defaults
+    try:
+        enrolls_df = _coerce_enrollments(enrolls_raw)
+        students_df = _coerce_students(students_raw)
+    except Exception as exc:
+        return _err(f"Failed to normalize CSVs: {exc}")
+
+    # 4. Optional knobs from the form
+    next_sem_label = request.data.get("semester") or None
+    section_cap = request.data.get("section_cap")
+    buffer_pct = request.data.get("buffer_pct")
+    try:
+        section_cap = int(section_cap) if section_cap not in (None, "") else None
+        buffer_pct = float(buffer_pct) if buffer_pct not in (None, "") else None
+    except (TypeError, ValueError):
+        return _err("section_cap must be int and buffer_pct must be float.")
+
+    # 5. Run the pipeline
+    try:
+        student_preds_df, demand_df, sections_df, _latest_snap = (
+            predict_next_semester(
+                enrolls_df, students_df,
+                next_sem_label=next_sem_label,
+                section_cap=section_cap,
+                buffer_pct=buffer_pct,
+            )
+        )
+    except FileNotFoundError as exc:
+        return _err(
+            "Trained ML artifacts are missing on the server. "
+            "Make sure ml/artifacts/ is populated.",
+            detail=str(exc),
+            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    except Exception as exc:
+        return _err(
+            "Pipeline failed.",
+            detail=str(exc),
+            traceback=traceback.format_exc(),
+            code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    if len(sections_df) == 0:
+        return _err(
+            "Pipeline returned zero predictions. Check that the uploaded "
+            "data covers students with enrollment history.",
+            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    # 6. Build the response
+    titles = _course_titles_lookup(enrolls_df)
+
+    predicted_sem = (
+        student_preds_df["next_sem"].iloc[0]
+        if "next_sem" in student_preds_df.columns and len(student_preds_df) > 0
+        else next_sem_label or ""
+    )
+    # Compare against the same term we're predicting — e.g. predicting
+    # Spring 2025 means the "Last Semester" column should show Spring 2024
+    # actuals, not Fall 2025. Otherwise the dashboard compares Spring
+    # predictions to Fall actuals, which is structurally meaningless.
+    predicted_term = (
+        predicted_sem.split("_")[-1] if predicted_sem and "_" in predicted_sem
+        else None
+    )
+    last_actuals = _last_semester_actuals(enrolls_df, target_term=predicted_term)
+
+    # Build per-course predicted-student lists from the inference output.
+    # student_preds_df has columns: student_id, course_code, reason,
+    # confidence, next_sem. Enrich each row with the student's profile so
+    # the dashboard can show major/year/GPA alongside the prediction.
+    student_lookup = {}
+    if len(students_df) > 0:
+        s_idx = students_df.set_index(students_df["student_id"].astype(str))
+        for sid, row in s_idx.iterrows():
+            # Approximate current academic year from earned credit hours.
+            # 33 hrs / year is the HTU typical full-time load.
+            cum_hrs = 0
+            if "total_passed_hrs" in row.index:
+                try:
+                    cum_hrs = int(row["total_passed_hrs"])
+                except (TypeError, ValueError):
+                    cum_hrs = 0
+            current_year = max(1, min(4, cum_hrs // 33 + 1))
+            student_lookup[sid] = {
+                "student_id":  sid,
+                "major":       str(row.get("major", "") or ""),
+                "degree_type": str(row.get("degree_type", "") or ""),
+                "plan_key":    str(row.get("plan_key", "") or ""),
+                "admission_year": (
+                    int(row["admission_year"])
+                    if "admission_year" in row.index
+                    and pd.notna(row["admission_year"]) else None
+                ),
+                "current_year": current_year,
+                "cum_hrs":      cum_hrs,
+                "gpa": (
+                    float(row["final_cum_gpa"])
+                    if "final_cum_gpa" in row.index
+                    and pd.notna(row["final_cum_gpa"]) else None
+                ),
+            }
+
+    # Group identified candidates by course
+    candidates_by_course = {}
+    if len(student_preds_df) > 0 and "course_code" in student_preds_df.columns:
+        for cc, grp in student_preds_df.groupby("course_code"):
+            rows = []
+            for _, r in grp.iterrows():
+                sid = str(r["student_id"])
+                profile = student_lookup.get(sid, {"student_id": sid})
+                rows.append({
+                    **profile,
+                    "reason":     str(r["reason"]),
+                    "confidence": float(r["confidence"]),
+                })
+            # Sort: higher confidence first, retake before predecessor on ties
+            rows.sort(
+                key=lambda x: (-x["confidence"],
+                               0 if x["reason"] == "retake_candidate" else 1)
+            )
+            candidates_by_course[str(cc)] = rows
+
+    courses_payload = []
+    total_predicted_enrollment = 0
+    total_sections_needed = 0
+    for _, row in sections_df.sort_values(
+        "predicted_count", ascending=False
+    ).iterrows():
+        cc = str(row["course_code"])
+        predicted = int(row["predicted_count"])
+        # Drop forecasts below the section-size floor — these sections
+        # wouldn't open in reality, and they're just noise in the dashboard.
+        if predicted < MIN_SECTION_SIZE:
+            continue
+        actual = last_actuals.get(cc)
+        candidates = candidates_by_course.get(cc, [])
+        sections_needed = int(row["predicted_sections"])
+        courses_payload.append({
+            "course_code":           cc,
+            "course_title":          titles.get(cc, ""),
+            "predicted_enrollment":  predicted,
+            "sections_needed":       sections_needed,
+            "last_semester_actual":  actual,  # may be None
+            "status":                _classify_status(predicted, actual),
+            # Identified students who are predicted to enrol. For TS-
+            # dominated courses this may be fewer than predicted_enrollment
+            # because TS aggregates don't identify specific students. The
+            # frontend should display predicted_enrollment as the count and
+            # this list as "who we can name."
+            "predicted_students":    candidates,
+            "identified_count":      len(candidates),
+        })
+        total_predicted_enrollment += predicted
+        total_sections_needed += sections_needed
+
+    response = {
+        "semester_predicted": predicted_sem,
+        "section_cap":        section_cap,
+        "buffer_pct":         buffer_pct,
+        "totals": {
+            "courses":              len(courses_payload),
+            "predicted_enrollment": total_predicted_enrollment,
+            "sections_needed":      total_sections_needed,
+            "students_processed":   int(students_df["student_id"].nunique()),
+        },
+        "courses": courses_payload,
+    }
+    return Response(response)
